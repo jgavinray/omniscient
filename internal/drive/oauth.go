@@ -1,0 +1,213 @@
+package drive
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"net"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+
+	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/google"
+	"google.golang.org/api/drive/v3"
+)
+
+// loadOAuthConfig reads the OAuth2 client credentials JSON file and returns
+// an oauth2.Config configured for Google Drive read-only access.
+func loadOAuthConfig(credentialsPath string) (*oauth2.Config, error) {
+	data, err := os.ReadFile(credentialsPath)
+	if err != nil {
+		return nil, fmt.Errorf("reading credentials file %s: %w", credentialsPath, err)
+	}
+
+	config, err := google.ConfigFromJSON(data, drive.DriveReadonlyScope)
+	if err != nil {
+		return nil, fmt.Errorf("parsing credentials JSON: %w", err)
+	}
+
+	config.RedirectURL = "http://localhost:8085/callback"
+
+	return config, nil
+}
+
+// loadToken reads a saved OAuth2 token from tokenPath. If the file does not
+// exist, it returns (nil, nil) so the caller can initiate the auth flow.
+func loadToken(tokenPath string) (*oauth2.Token, error) {
+	f, err := os.Open(tokenPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("opening token file %s: %w", tokenPath, err)
+	}
+	defer f.Close()
+
+	var token oauth2.Token
+	if err := json.NewDecoder(f).Decode(&token); err != nil {
+		return nil, fmt.Errorf("decoding token JSON from %s: %w", tokenPath, err)
+	}
+
+	return &token, nil
+}
+
+// saveToken writes the OAuth2 token as JSON to tokenPath. It creates any
+// necessary parent directories and sets file permissions to 0600.
+func saveToken(tokenPath string, token *oauth2.Token) error {
+	dir := filepath.Dir(tokenPath)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return fmt.Errorf("creating token directory %s: %w", dir, err)
+	}
+
+	data, err := json.MarshalIndent(token, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshaling token: %w", err)
+	}
+
+	if err := os.WriteFile(tokenPath, data, 0600); err != nil {
+		return fmt.Errorf("writing token file %s: %w", tokenPath, err)
+	}
+
+	slog.Info("saved OAuth2 token", "path", tokenPath)
+	return nil
+}
+
+// RunAuthFlow performs the full interactive OAuth2 browser consent flow.
+// It starts a temporary HTTP server on localhost:8085 to capture the callback,
+// opens the user's browser to the Google consent page, exchanges the
+// authorization code for a token, and saves it to tokenPath.
+func RunAuthFlow(credentialsPath, tokenPath string) (*oauth2.Token, error) {
+	config, err := loadOAuthConfig(credentialsPath)
+	if err != nil {
+		return nil, fmt.Errorf("loading OAuth config: %w", err)
+	}
+
+	authURL := config.AuthCodeURL("state-token", oauth2.AccessTypeOffline)
+
+	// Channel to receive the authorization code from the callback handler.
+	codeCh := make(chan string, 1)
+	errCh := make(chan error, 1)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
+		code := r.URL.Query().Get("code")
+		if code == "" {
+			errMsg := r.URL.Query().Get("error")
+			if errMsg == "" {
+				errMsg = "no authorization code in callback"
+			}
+			http.Error(w, "Authorization failed: "+errMsg, http.StatusBadRequest)
+			errCh <- fmt.Errorf("OAuth callback error: %s", errMsg)
+			return
+		}
+
+		fmt.Fprintln(w, "Authorization successful! You may close this browser tab.")
+		codeCh <- code
+	})
+
+	listener, err := net.Listen("tcp", "localhost:8085")
+	if err != nil {
+		return nil, fmt.Errorf("starting callback listener on localhost:8085: %w", err)
+	}
+
+	server := &http.Server{Handler: mux}
+
+	// Run the server in the background.
+	go func() {
+		if serveErr := server.Serve(listener); serveErr != nil && serveErr != http.ErrServerClosed {
+			errCh <- fmt.Errorf("callback server error: %w", serveErr)
+		}
+	}()
+
+	slog.Info("opening browser for Google OAuth2 consent", "url", authURL)
+
+	if err := openBrowser(authURL); err != nil {
+		slog.Warn("could not open browser automatically", "error", err)
+		fmt.Printf("Please open the following URL in your browser:\n\n%s\n\n", authURL)
+	}
+
+	// Wait for the authorization code or an error.
+	var code string
+	select {
+	case code = <-codeCh:
+		slog.Info("received authorization code")
+	case err := <-errCh:
+		_ = server.Shutdown(context.Background())
+		return nil, err
+	}
+
+	// Shut down the callback server.
+	if err := server.Shutdown(context.Background()); err != nil {
+		slog.Warn("error shutting down callback server", "error", err)
+	}
+
+	// Exchange the authorization code for a token.
+	token, err := config.Exchange(context.Background(), code)
+	if err != nil {
+		return nil, fmt.Errorf("exchanging authorization code for token: %w", err)
+	}
+
+	if err := saveToken(tokenPath, token); err != nil {
+		return nil, fmt.Errorf("saving token: %w", err)
+	}
+
+	return token, nil
+}
+
+// openBrowser opens the given URL in the user's default browser.
+func openBrowser(url string) error {
+	var cmd *exec.Cmd
+
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", url)
+	case "linux":
+		cmd = exec.Command("xdg-open", url)
+	default:
+		return fmt.Errorf("unsupported platform %s for browser open", runtime.GOOS)
+	}
+
+	return cmd.Start()
+}
+
+// getTokenSource returns an oauth2.TokenSource that auto-refreshes the token.
+// When a new token is obtained via refresh, it is automatically saved to tokenPath.
+func getTokenSource(config *oauth2.Config, tokenPath string, token *oauth2.Token) oauth2.TokenSource {
+	baseSource := config.TokenSource(context.Background(), token)
+	return &savingTokenSource{
+		base:      baseSource,
+		tokenPath: tokenPath,
+		current:   token,
+	}
+}
+
+// savingTokenSource wraps an oauth2.TokenSource and saves the token to disk
+// whenever a new token is obtained (e.g., after a refresh).
+type savingTokenSource struct {
+	base      oauth2.TokenSource
+	tokenPath string
+	current   *oauth2.Token
+}
+
+// Token returns a valid token, saving it to disk if it was refreshed.
+func (s *savingTokenSource) Token() (*oauth2.Token, error) {
+	token, err := s.base.Token()
+	if err != nil {
+		return nil, err
+	}
+
+	// If the token changed (was refreshed), persist it.
+	if token.AccessToken != s.current.AccessToken {
+		slog.Info("OAuth2 token refreshed, saving to disk")
+		if saveErr := saveToken(s.tokenPath, token); saveErr != nil {
+			slog.Error("failed to save refreshed token", "error", saveErr)
+		}
+		s.current = token
+	}
+
+	return token, nil
+}

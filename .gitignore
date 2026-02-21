@@ -1,0 +1,25 @@
+# Build artifacts
+bin/
+omniscient
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets / credentials
+credentials.json
+token.json
+config.yaml
+
+# Database
+*.db
+*.db-journal
+*.db-wal
+*.db-shm

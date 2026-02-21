@@ -1,0 +1,25 @@
+#!/bin/sh
+
+# Validate conventional commit format.
+# Allowed prefixes: feat, fix, docs, test, refactor, chore
+# Format: <type>(<optional scope>): <description>
+
+commit_msg_file="$1"
+commit_msg=$(head -1 "$commit_msg_file")
+
+pattern='^(feat|fix|docs|test|refactor|chore)(\(.+\))?: .+'
+
+if ! echo "$commit_msg" | grep -qE "$pattern"; then
+    echo "ERROR: Commit message does not follow Conventional Commits format."
+    echo ""
+    echo "Expected: <type>(<scope>): <description>"
+    echo "Types: feat, fix, docs, test, refactor, chore"
+    echo ""
+    echo "Examples:"
+    echo "  feat: add Anthropic LLM provider"
+    echo "  fix(sync): handle empty transcript gracefully"
+    echo "  docs: update installation guide"
+    echo ""
+    echo "Your message: $commit_msg"
+    exit 1
+fi

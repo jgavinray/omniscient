@@ -1,0 +1,72 @@
+# /opt/omniscient/config.yaml
+
+google:
+  # Path to Google OAuth2 client credentials JSON
+  # Download from: Google Cloud Console → APIs & Services → Credentials → OAuth 2.0 Client IDs
+  credentials_file: "/opt/omniscient/credentials/credentials.json"
+
+  # Path where the OAuth2 token will be stored after first-run browser consent
+  # Auto-generated — do not create manually
+  token_file: "/opt/omniscient/credentials/token.json"
+
+  # Google Drive folder ID containing transcripts
+  # Find via: Right-click folder in Drive → "Get link" → Extract ID from URL
+  folder_id: "1abc...xyz"
+
+llm:
+  # Provider: "anthropic" or "openai-compatible"
+  provider: "openai-compatible"
+
+  # For provider=anthropic:
+  # Anthropic API key (get from: https://console.anthropic.com/settings/keys)
+  anthropic_api_key: ""
+
+  # For provider=openai-compatible:
+  # Base URL for OpenAI-compatible API (vLLM, Ollama, OpenAI, etc.)
+  openai_base_url: "http://spark:8000/v1"
+  # API key (optional for local endpoints, required for OpenAI)
+  openai_api_key: "local"
+
+  # Model name
+  # For anthropic: "claude-opus-4", "claude-sonnet-4", "claude-haiku-4"
+  # For openai-compatible: depends on endpoint (e.g., "Qwen/Qwen2.5-72B-Instruct-AWQ")
+  model: "Qwen/Qwen2.5-72B-Instruct-AWQ"
+
+  # Timeout for LLM extraction (seconds)
+  timeout: 120
+
+confluence:
+  # Confluence Cloud URL (e.g., https://your-company.atlassian.net)
+  base_url: "https://your-company.atlassian.net"
+
+  # Confluence API authentication
+  # Email of API token owner
+  email: "your-email@example.com"
+
+  # API token (create at: https://id.atlassian.com/manage/api-tokens)
+  api_token: "your-confluence-api-token"
+
+  # Target Confluence space key (e.g., "ENG", "TEAM")
+  space_key: "ENG"
+
+  # Optional: Parent page ID (all transcript pages created under this)
+  # Leave empty for root-level pages
+  parent_page_id: ""
+
+sync:
+  # How far back to look for transcripts (hours)
+  lookback_hours: 24
+
+  # SQLite database path (tracks processed transcripts)
+  database_path: "/opt/omniscient/data/omniscient.db"
+
+  # Maximum transcripts to process per run
+  # (prevents runaway processing on first run)
+  max_per_run: 50
+
+logging:
+  # Log level: debug, info, warn, error
+  level: "info"
+
+  # Log file path (leave empty for stdout only)
+  file: "/var/log/omniscient/omniscient.log"
