@@ -2,6 +2,7 @@ package llm
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -57,7 +58,7 @@ type openaiResponse struct {
 }
 
 // callAPI sends a prompt to the OpenAI-compatible API and returns the response text.
-func (e *OpenAIExtractor) callAPI(prompt string, maxTokens int) (string, error) {
+func (e *OpenAIExtractor) callAPI(ctx context.Context, prompt string, maxTokens int) (string, error) {
 	reqBody := openaiRequest{
 		Model: e.model,
 		Messages: []openaiMessage{
@@ -75,7 +76,7 @@ func (e *OpenAIExtractor) callAPI(prompt string, maxTokens int) (string, error) 
 	var responseText string
 
 	err = retryable(func() error {
-		req, err := http.NewRequest("POST", e.baseURL+"/chat/completions", bytes.NewReader(jsonData))
+		req, err := http.NewRequestWithContext(ctx, "POST", e.baseURL+"/chat/completions", bytes.NewReader(jsonData))
 		if err != nil {
 			return fmt.Errorf("creating openai request: %w", err)
 		}
@@ -122,10 +123,10 @@ func (e *OpenAIExtractor) callAPI(prompt string, maxTokens int) (string, error) 
 }
 
 // Classify sends a classification prompt to the OpenAI-compatible API and returns the meeting type key.
-func (e *OpenAIExtractor) Classify(transcriptPreview string, templateKeys []string, classifyPrompt string) (string, error) {
+func (e *OpenAIExtractor) Classify(ctx context.Context, transcriptPreview string, templateKeys []string, classifyPrompt string) (string, error) {
 	prompt := buildClassifyPrompt(classifyPrompt, transcriptPreview, templateKeys)
 
-	text, err := e.callAPI(prompt, 32)
+	text, err := e.callAPI(ctx, prompt, 32)
 	if err != nil {
 		return "", fmt.Errorf("openai classification failed: %w", err)
 	}
@@ -135,10 +136,10 @@ func (e *OpenAIExtractor) Classify(transcriptPreview string, templateKeys []stri
 
 // Extract sends the transcript with the given extraction prompt to the OpenAI-compatible
 // API and returns the raw cleaned text (markdown with YAML front-matter).
-func (e *OpenAIExtractor) Extract(transcript string, extractionPrompt string) (string, error) {
+func (e *OpenAIExtractor) Extract(ctx context.Context, transcript string, extractionPrompt string) (string, error) {
 	prompt := buildExtractionPrompt(extractionPrompt, transcript)
 
-	text, err := e.callAPI(prompt, 4096)
+	text, err := e.callAPI(ctx, prompt, 4096)
 	if err != nil {
 		return "", fmt.Errorf("openai extraction failed: %w", err)
 	}

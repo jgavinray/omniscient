@@ -2,6 +2,8 @@ package drive
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -11,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sync"
 
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
@@ -76,6 +79,15 @@ func saveToken(tokenPath string, token *oauth2.Token) error {
 	return nil
 }
 
+// generateState creates a random state parameter for CSRF protection.
+func generateState() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("generating random state: %w", err)
+	}
+	return base64.URLEncoding.EncodeToString(b), nil
+}
+
 // RunAuthFlow performs the full interactive OAuth2 browser consent flow.
 // It starts a temporary HTTP server on localhost:8085 to capture the callback,
 // opens the user's browser to the Google consent page, exchanges the
@@ -86,7 +98,12 @@ func RunAuthFlow(credentialsPath, tokenPath string) (*oauth2.Token, error) {
 		return nil, fmt.Errorf("loading OAuth config: %w", err)
 	}
 
-	authURL := config.AuthCodeURL("state-token", oauth2.AccessTypeOffline)
+	state, err := generateState()
+	if err != nil {
+		return nil, err
+	}
+
+	authURL := config.AuthCodeURL(state, oauth2.AccessTypeOffline)
 
 	// Channel to receive the authorization code from the callback handler.
 	codeCh := make(chan string, 1)
@@ -94,6 +111,13 @@ func RunAuthFlow(credentialsPath, tokenPath string) (*oauth2.Token, error) {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
+		// Verify the state parameter to prevent CSRF.
+		if r.URL.Query().Get("state") != state {
+			http.Error(w, "Invalid state parameter", http.StatusBadRequest)
+			errCh <- fmt.Errorf("OAuth callback: state mismatch (possible CSRF)")
+			return
+		}
+
 		code := r.URL.Query().Get("code")
 		if code == "" {
 			errMsg := r.URL.Query().Get("error")
@@ -186,11 +210,14 @@ func getTokenSource(config *oauth2.Config, tokenPath string, token *oauth2.Token
 }
 
 // savingTokenSource wraps an oauth2.TokenSource and saves the token to disk
-// whenever a new token is obtained (e.g., after a refresh).
+// whenever a new token is obtained (e.g., after a refresh). It is safe for
+// concurrent use.
 type savingTokenSource struct {
 	base      oauth2.TokenSource
 	tokenPath string
-	current   *oauth2.Token
+
+	mu      sync.Mutex
+	current *oauth2.Token
 }
 
 // Token returns a valid token, saving it to disk if it was refreshed.
@@ -199,6 +226,9 @@ func (s *savingTokenSource) Token() (*oauth2.Token, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	// If the token changed (was refreshed), persist it.
 	if token.AccessToken != s.current.AccessToken {

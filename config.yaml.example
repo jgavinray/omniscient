@@ -32,10 +32,14 @@ llm:
   # For openai-compatible: depends on endpoint (e.g., "Qwen/Qwen2.5-72B-Instruct-AWQ")
   model: "Qwen/Qwen2.5-72B-Instruct-AWQ"
 
-  # Timeout for LLM extraction (seconds)
+  # Timeout for LLM extraction (seconds, default: 120)
   timeout: 120
 
 confluence:
+  # Set to false to disable Confluence publishing (output goes to stdout instead)
+  # Default: true (enabled)
+  enabled: true
+
   # Confluence Cloud URL (e.g., https://your-company.atlassian.net)
   base_url: "https://your-company.atlassian.net"
 
@@ -54,19 +58,50 @@ confluence:
   parent_page_id: ""
 
 sync:
-  # How far back to look for transcripts (hours)
+  # How far back to look for transcripts (hours, default: 24)
   lookback_hours: 24
 
   # SQLite database path (tracks processed transcripts)
   database_path: "/opt/omniscient/data/omniscient.db"
 
-  # Maximum transcripts to process per run
+  # Maximum transcripts to process per run (default: 50)
   # (prevents runaway processing on first run)
   max_per_run: 50
 
 logging:
-  # Log level: debug, info, warn, error
+  # Log level: debug, info, warn, error (default: info)
   level: "info"
 
   # Log file path (leave empty for stdout only)
+  # When set, logs are written to both stdout and this file
   file: "/var/log/omniscient/omniscient.log"
+
+# Set to true to skip publishing and print extracted output to logs instead
+dry_run: false
+
+# Prompt configuration (optional — sensible defaults are provided)
+# prompts:
+#   classify_prompt: |
+#     Classify this meeting transcript into one of the following types: {{TEMPLATE_KEYS}}
+#
+#     Read the first portion of the transcript below and respond with ONLY the type key (a single word, no explanation).
+#
+#     TRANSCRIPT PREVIEW:
+#     {{TRANSCRIPT_PREVIEW}}
+#
+#   templates:
+#     engineering:
+#       description: "Engineering standups, design reviews, and technical discussions"
+#       extraction_prompt: |
+#         You are a meeting notes assistant. Extract structured notes from this engineering meeting transcript.
+#         ...
+#         TRANSCRIPT:
+#         {{TRANSCRIPT}}
+#     customer_success:
+#       description: "Customer calls, success reviews, and account meetings"
+#       extraction_prompt: |
+#         ...
+#     planning:
+#       description: "Sprint planning, roadmap reviews, and strategy sessions"
+#       extraction_prompt: |
+#         ...

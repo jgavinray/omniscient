@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 )
@@ -36,8 +37,9 @@ func TestNewStore(t *testing.T) {
 
 func TestIsProcessed_EmptyDB(t *testing.T) {
 	store := newTestStore(t)
+	ctx := context.Background()
 
-	processed, err := store.IsProcessed("nonexistent-id")
+	processed, err := store.IsProcessed(ctx, "nonexistent-id")
 	if err != nil {
 		t.Fatalf("IsProcessed returned unexpected error: %v", err)
 	}
@@ -48,6 +50,7 @@ func TestIsProcessed_EmptyDB(t *testing.T) {
 
 func TestMarkProcessed_ThenIsProcessed(t *testing.T) {
 	store := newTestStore(t)
+	ctx := context.Background()
 
 	const (
 		id   = "transcript-001"
@@ -55,11 +58,11 @@ func TestMarkProcessed_ThenIsProcessed(t *testing.T) {
 		url  = "https://confluence.example.com/pages/12345"
 	)
 
-	if err := store.MarkProcessed(id, name, url); err != nil {
+	if err := store.MarkProcessed(ctx, id, name, url); err != nil {
 		t.Fatalf("MarkProcessed returned unexpected error: %v", err)
 	}
 
-	processed, err := store.IsProcessed(id)
+	processed, err := store.IsProcessed(ctx, id)
 	if err != nil {
 		t.Fatalf("IsProcessed returned unexpected error: %v", err)
 	}
@@ -70,6 +73,7 @@ func TestMarkProcessed_ThenIsProcessed(t *testing.T) {
 
 func TestMarkProcessed_Idempotent(t *testing.T) {
 	store := newTestStore(t)
+	ctx := context.Background()
 
 	const (
 		id   = "transcript-dup"
@@ -77,14 +81,14 @@ func TestMarkProcessed_Idempotent(t *testing.T) {
 		url  = "https://confluence.example.com/pages/99999"
 	)
 
-	if err := store.MarkProcessed(id, name, url); err != nil {
+	if err := store.MarkProcessed(ctx, id, name, url); err != nil {
 		t.Fatalf("first MarkProcessed returned unexpected error: %v", err)
 	}
-	if err := store.MarkProcessed(id, name, url); err != nil {
+	if err := store.MarkProcessed(ctx, id, name, url); err != nil {
 		t.Fatalf("second MarkProcessed returned unexpected error: %v", err)
 	}
 
-	processed, err := store.IsProcessed(id)
+	processed, err := store.IsProcessed(ctx, id)
 	if err != nil {
 		t.Fatalf("IsProcessed returned unexpected error: %v", err)
 	}
@@ -95,6 +99,7 @@ func TestMarkProcessed_Idempotent(t *testing.T) {
 
 func TestMultipleTranscripts(t *testing.T) {
 	store := newTestStore(t)
+	ctx := context.Background()
 
 	transcripts := []struct {
 		id   string
@@ -107,13 +112,13 @@ func TestMultipleTranscripts(t *testing.T) {
 	}
 
 	for _, tr := range transcripts {
-		if err := store.MarkProcessed(tr.id, tr.name, tr.url); err != nil {
+		if err := store.MarkProcessed(ctx, tr.id, tr.name, tr.url); err != nil {
 			t.Fatalf("MarkProcessed(%s) returned unexpected error: %v", tr.id, err)
 		}
 	}
 
 	for _, tr := range transcripts {
-		processed, err := store.IsProcessed(tr.id)
+		processed, err := store.IsProcessed(ctx, tr.id)
 		if err != nil {
 			t.Fatalf("IsProcessed(%s) returned unexpected error: %v", tr.id, err)
 		}
@@ -123,7 +128,7 @@ func TestMultipleTranscripts(t *testing.T) {
 	}
 
 	// Verify an ID that was never inserted is still not found.
-	processed, err := store.IsProcessed("t-zzz-never-added")
+	processed, err := store.IsProcessed(ctx, "t-zzz-never-added")
 	if err != nil {
 		t.Fatalf("IsProcessed(unknown) returned unexpected error: %v", err)
 	}
@@ -135,6 +140,7 @@ func TestMultipleTranscripts(t *testing.T) {
 func TestNewStore_CreatesDirectories(t *testing.T) {
 	// Build a nested path that does not yet exist inside the temp dir.
 	dbPath := filepath.Join(t.TempDir(), "a", "b", "c", "test.db")
+	ctx := context.Background()
 
 	store, err := NewStore(dbPath)
 	if err != nil {
@@ -147,10 +153,10 @@ func TestNewStore_CreatesDirectories(t *testing.T) {
 	}()
 
 	// Smoke-test that the database is functional.
-	if err := store.MarkProcessed("nested-id", "Nested Test", "https://example.com"); err != nil {
+	if err := store.MarkProcessed(ctx, "nested-id", "Nested Test", "https://example.com"); err != nil {
 		t.Fatalf("MarkProcessed on nested-path store returned unexpected error: %v", err)
 	}
-	processed, err := store.IsProcessed("nested-id")
+	processed, err := store.IsProcessed(ctx, "nested-id")
 	if err != nil {
 		t.Fatalf("IsProcessed on nested-path store returned unexpected error: %v", err)
 	}

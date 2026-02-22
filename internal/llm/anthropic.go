@@ -2,6 +2,7 @@ package llm
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -52,7 +53,7 @@ type anthropicResponse struct {
 }
 
 // callAPI sends a prompt to the Anthropic API and returns the response text.
-func (e *AnthropicExtractor) callAPI(prompt string, maxTokens int) (string, error) {
+func (e *AnthropicExtractor) callAPI(ctx context.Context, prompt string, maxTokens int) (string, error) {
 	reqBody := anthropicRequest{
 		Model:     e.model,
 		MaxTokens: maxTokens,
@@ -69,7 +70,7 @@ func (e *AnthropicExtractor) callAPI(prompt string, maxTokens int) (string, erro
 	var responseText string
 
 	err = retryable(func() error {
-		req, err := http.NewRequest("POST", e.baseURL+"/v1/messages", bytes.NewReader(jsonData))
+		req, err := http.NewRequestWithContext(ctx, "POST", e.baseURL+"/v1/messages", bytes.NewReader(jsonData))
 		if err != nil {
 			return fmt.Errorf("creating anthropic request: %w", err)
 		}
@@ -117,10 +118,10 @@ func (e *AnthropicExtractor) callAPI(prompt string, maxTokens int) (string, erro
 }
 
 // Classify sends a classification prompt to Anthropic and returns the meeting type key.
-func (e *AnthropicExtractor) Classify(transcriptPreview string, templateKeys []string, classifyPrompt string) (string, error) {
+func (e *AnthropicExtractor) Classify(ctx context.Context, transcriptPreview string, templateKeys []string, classifyPrompt string) (string, error) {
 	prompt := buildClassifyPrompt(classifyPrompt, transcriptPreview, templateKeys)
 
-	text, err := e.callAPI(prompt, 32)
+	text, err := e.callAPI(ctx, prompt, 32)
 	if err != nil {
 		return "", fmt.Errorf("anthropic classification failed: %w", err)
 	}
@@ -130,10 +131,10 @@ func (e *AnthropicExtractor) Classify(transcriptPreview string, templateKeys []s
 
 // Extract sends the transcript with the given extraction prompt to Anthropic
 // and returns the raw cleaned text (markdown with YAML front-matter).
-func (e *AnthropicExtractor) Extract(transcript string, extractionPrompt string) (string, error) {
+func (e *AnthropicExtractor) Extract(ctx context.Context, transcript string, extractionPrompt string) (string, error) {
 	prompt := buildExtractionPrompt(extractionPrompt, transcript)
 
-	text, err := e.callAPI(prompt, 4096)
+	text, err := e.callAPI(ctx, prompt, 4096)
 	if err != nil {
 		return "", fmt.Errorf("anthropic extraction failed: %w", err)
 	}

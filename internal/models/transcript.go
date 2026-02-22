@@ -24,20 +24,7 @@ type ExtractionResult struct {
 // It strips leading code fences, splits on --- delimiters, parses YAML,
 // and returns the markdown body.
 func ParseExtractionOutput(raw string) (*ExtractionResult, error) {
-	s := strings.TrimSpace(raw)
-
-	// Strip leading code fences (LLMs may wrap output).
-	if strings.HasPrefix(s, "```markdown") {
-		s = strings.TrimPrefix(s, "```markdown")
-	} else if strings.HasPrefix(s, "```yaml") {
-		s = strings.TrimPrefix(s, "```yaml")
-	} else if strings.HasPrefix(s, "```") {
-		s = strings.TrimPrefix(s, "```")
-	}
-	if strings.HasSuffix(s, "```") {
-		s = strings.TrimSuffix(s, "```")
-	}
-	s = strings.TrimSpace(s)
+	s := StripCodeFences(raw)
 
 	// Must start with ---
 	if !strings.HasPrefix(s, "---") {
@@ -75,43 +62,26 @@ func ParseExtractionOutput(raw string) (*ExtractionResult, error) {
 	}, nil
 }
 
-// MeetingData holds the structured data extracted from a meeting transcript by the LLM.
-type MeetingData struct {
-	MeetingType        string     `json:"meeting_type"`
-	Date               string     `json:"date"`
-	Time               string     `json:"time"`
-	DurationMin        int        `json:"duration_min"`
-	Participants       []string   `json:"participants"`
-	ProjectsDiscussed  []string   `json:"projects_discussed"`
-	DecisionsMade      []Decision `json:"decisions_made"`
-	BlockersIdentified []Blocker  `json:"blockers_identified"`
-	ActionItems        []Action   `json:"action_items"`
-	KeyQuotes          []Quote    `json:"key_quotes"`
-	Sentiment          string     `json:"sentiment"`
-	Summary            string     `json:"summary"`
-}
+// StripCodeFences removes markdown code fences (```json, ```markdown, ```yaml, ```)
+// from text and trims surrounding whitespace.
+func StripCodeFences(s string) string {
+	s = strings.TrimSpace(s)
 
-type Decision struct {
-	Decision  string `json:"decision"`
-	Owner     string `json:"owner"`
-	Rationale string `json:"rationale"`
-}
+	// Remove leading ```json or ```markdown or ```yaml or ``` fence.
+	if strings.HasPrefix(s, "```json") {
+		s = strings.TrimPrefix(s, "```json")
+	} else if strings.HasPrefix(s, "```markdown") {
+		s = strings.TrimPrefix(s, "```markdown")
+	} else if strings.HasPrefix(s, "```yaml") {
+		s = strings.TrimPrefix(s, "```yaml")
+	} else if strings.HasPrefix(s, "```") {
+		s = strings.TrimPrefix(s, "```")
+	}
 
-type Blocker struct {
-	Blocker    string `json:"blocker"`
-	Ticket     string `json:"ticket"`
-	Impact     string `json:"impact"`
-	Escalation string `json:"escalation"`
-}
+	// Remove trailing ``` fence.
+	if strings.HasSuffix(s, "```") {
+		s = strings.TrimSuffix(s, "```")
+	}
 
-type Action struct {
-	Task    string `json:"task"`
-	Owner   string `json:"owner"`
-	DueDate string `json:"due_date"`
-}
-
-type Quote struct {
-	Speaker string `json:"speaker"`
-	Quote   string `json:"quote"`
-	Context string `json:"context"`
+	return strings.TrimSpace(s)
 }

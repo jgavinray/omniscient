@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"os"
@@ -57,9 +58,9 @@ func NewStore(dbPath string) (*Store, error) {
 
 // IsProcessed reports whether a transcript with the given ID has already
 // been processed.
-func (s *Store) IsProcessed(transcriptID string) (bool, error) {
+func (s *Store) IsProcessed(ctx context.Context, transcriptID string) (bool, error) {
 	var exists bool
-	err := s.db.QueryRow(
+	err := s.db.QueryRowContext(ctx,
 		"SELECT EXISTS(SELECT 1 FROM processed_transcripts WHERE transcript_id = ?)",
 		transcriptID,
 	).Scan(&exists)
@@ -72,14 +73,14 @@ func (s *Store) IsProcessed(transcriptID string) (bool, error) {
 // MarkProcessed records a transcript as processed. The operation is
 // idempotent — re-inserting an existing transcript_id is silently ignored.
 // A transaction is used for atomicity.
-func (s *Store) MarkProcessed(transcriptID, transcriptName, confluenceURL string) error {
-	tx, err := s.db.Begin()
+func (s *Store) MarkProcessed(ctx context.Context, transcriptID, transcriptName, confluenceURL string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
 	defer tx.Rollback()
 
-	_, err = tx.Exec(
+	_, err = tx.ExecContext(ctx,
 		"INSERT OR IGNORE INTO processed_transcripts (transcript_id, transcript_name, confluence_url) VALUES (?, ?, ?)",
 		transcriptID, transcriptName, confluenceURL,
 	)

@@ -94,6 +94,8 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("parsing config file %s: %w", path, err)
 	}
 
+	cfg.applyDefaults()
+
 	if err := cfg.validate(); err != nil {
 		return nil, fmt.Errorf("validating config: %w", err)
 	}
@@ -101,8 +103,30 @@ func Load(path string) (*Config, error) {
 	return &cfg, nil
 }
 
-// validate checks all required fields, applies defaults for optional fields,
-// and returns a descriptive error for the first validation failure encountered.
+// applyDefaults sets default values for optional fields that were not specified.
+func (c *Config) applyDefaults() {
+	if c.LLM.Timeout == 0 {
+		c.LLM.Timeout = 120
+	}
+	if c.Sync.LookbackHours == 0 {
+		c.Sync.LookbackHours = 24
+	}
+	if c.Sync.MaxPerRun == 0 {
+		c.Sync.MaxPerRun = 50
+	}
+	if c.Logging.Level == "" {
+		c.Logging.Level = "info"
+	}
+	if c.Prompts.ClassifyPrompt == "" {
+		c.Prompts.ClassifyPrompt = defaultClassifyPrompt
+	}
+	if len(c.Prompts.Templates) == 0 {
+		c.Prompts.Templates = defaultTemplates()
+	}
+}
+
+// validate checks all required fields and returns a descriptive error for the
+// first validation failure encountered. Defaults must be applied before calling.
 func (c *Config) validate() error {
 	// Google config validation.
 	if c.Google.CredentialsFile == "" {
@@ -138,9 +162,6 @@ func (c *Config) validate() error {
 	if c.LLM.Model == "" {
 		return fmt.Errorf("llm.model must not be empty")
 	}
-	if c.LLM.Timeout == 0 {
-		c.LLM.Timeout = 120
-	}
 
 	// Confluence config validation (skip when disabled).
 	if c.Confluence.IsEnabled() {
@@ -162,26 +183,17 @@ func (c *Config) validate() error {
 	}
 
 	// Sync config validation.
-	if c.Sync.LookbackHours == 0 {
-		c.Sync.LookbackHours = 24
-	}
 	if c.Sync.LookbackHours < 0 {
 		return fmt.Errorf("sync.lookback_hours must be > 0, got %d", c.Sync.LookbackHours)
 	}
 	if c.Sync.DatabasePath == "" {
 		return fmt.Errorf("sync.database_path must not be empty")
 	}
-	if c.Sync.MaxPerRun == 0 {
-		c.Sync.MaxPerRun = 50
-	}
 	if c.Sync.MaxPerRun < 0 {
 		return fmt.Errorf("sync.max_per_run must be > 0, got %d", c.Sync.MaxPerRun)
 	}
 
 	// Logging config validation.
-	if c.Logging.Level == "" {
-		c.Logging.Level = "info"
-	}
 	validLevels := map[string]bool{
 		"debug": true,
 		"info":  true,
@@ -190,14 +202,6 @@ func (c *Config) validate() error {
 	}
 	if !validLevels[c.Logging.Level] {
 		return fmt.Errorf("logging.level must be one of debug, info, warn, error; got %q", c.Logging.Level)
-	}
-
-	// Prompts config defaults.
-	if c.Prompts.ClassifyPrompt == "" {
-		c.Prompts.ClassifyPrompt = defaultClassifyPrompt
-	}
-	if len(c.Prompts.Templates) == 0 {
-		c.Prompts.Templates = defaultTemplates()
 	}
 
 	return nil

@@ -397,6 +397,7 @@ func TestValidate_Defaults(t *testing.T) {
 	cfg.Sync.MaxPerRun = 0
 	cfg.Logging.Level = ""
 
+	cfg.applyDefaults()
 	err := cfg.validate()
 	if err != nil {
 		t.Fatalf("validate() returned unexpected error: %v", err)
@@ -484,7 +485,8 @@ func TestValidate_PromptsLoadedFromYAML(t *testing.T) {
 
 func TestValidate_DefaultPromptsPopulated(t *testing.T) {
 	cfg := baseValidConfig()
-	// No prompts section — defaults should be populated.
+	// No prompts section — defaults should be populated by applyDefaults.
+	cfg.applyDefaults()
 	err := cfg.validate()
 	if err != nil {
 		t.Fatalf("validate() returned unexpected error: %v", err)

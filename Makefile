@@ -1,10 +1,16 @@
-.PHONY: build test install clean setup-hooks
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+
+.PHONY: build test lint install clean setup-hooks
 
 build:
-	go build -o bin/omniscient ./cmd/omniscient
+	go build -trimpath -ldflags="-s -w -X main.version=$(VERSION)" -o bin/omniscient ./cmd/omniscient
 
 test:
-	go test -v ./...
+	go test -race -v ./...
+
+lint:
+	go vet ./...
+	go mod tidy -diff
 
 install:
 	sudo mkdir -p /opt/omniscient/{data,credentials}
