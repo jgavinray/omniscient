@@ -36,3 +36,7 @@ func isTransient(err error) bool {
 func retryable(fn func() error, maxAttempts int) error {
 	return retry.Do(fn, maxAttempts)
 }
+
+func truncateBody(body string) string {
+	return retry.TruncateBody(body)
+}

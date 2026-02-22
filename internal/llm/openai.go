@@ -30,6 +30,9 @@ func NewOpenAIExtractor(baseURL, apiKey, model string, timeout time.Duration) *O
 		model:   model,
 		httpClient: &http.Client{
 			Timeout: timeout,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				return fmt.Errorf("unexpected redirect to %s", req.URL)
+			},
 		},
 	}
 }
@@ -90,15 +93,19 @@ func (e *OpenAIExtractor) callAPI(ctx context.Context, prompt string, maxTokens 
 		}
 		defer resp.Body.Close()
 
-		body, err := io.ReadAll(resp.Body)
+		const maxResponseBytes = 10 * 1024 * 1024 // 10 MB
+		body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 		if err != nil {
 			return fmt.Errorf("reading openai response body: %w", err)
+		}
+		if int64(len(body)) >= maxResponseBytes {
+			return fmt.Errorf("openai response exceeded %d byte limit", maxResponseBytes)
 		}
 
 		if resp.StatusCode != http.StatusOK {
 			return &httpError{
 				StatusCode: resp.StatusCode,
-				Message:    string(body),
+				Message:    truncateBody(string(body)),
 			}
 		}
 

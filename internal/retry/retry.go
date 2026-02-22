@@ -8,6 +8,16 @@ import (
 	"time"
 )
 
+const maxErrBodyBytes = 512
+
+// TruncateBody shortens a response body for safe inclusion in error messages.
+func TruncateBody(body string) string {
+	if len(body) > maxErrBodyBytes {
+		return body[:maxErrBodyBytes] + "... [truncated]"
+	}
+	return body
+}
+
 // HTTPError represents an HTTP error with a status code, allowing the retry
 // logic to distinguish between transient and permanent failures.
 type HTTPError struct {
@@ -17,7 +27,7 @@ type HTTPError struct {
 
 // Error implements the error interface for HTTPError.
 func (e *HTTPError) Error() string {
-	return fmt.Sprintf("HTTP %d: %s", e.StatusCode, e.Message)
+	return fmt.Sprintf("HTTP %d: %s", e.StatusCode, TruncateBody(e.Message))
 }
 
 // IsTransient checks whether an error is a transient HTTP error that should

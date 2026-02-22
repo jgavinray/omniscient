@@ -47,7 +47,7 @@ func NewClient(ctx context.Context, credentialsPath, tokenPath string) (*Client,
 		return nil, fmt.Errorf("no token found at %s — run the 'auth' command first to authorize", tokenPath)
 	}
 
-	tokenSource := getTokenSource(config, tokenPath, token)
+	tokenSource := getTokenSource(ctx, config, tokenPath, token)
 	httpClient := oauth2.NewClient(ctx, tokenSource)
 
 	service, err := drive.NewService(ctx, option.WithHTTPClient(httpClient))
@@ -156,9 +156,13 @@ func (c *Client) exportFileAsText(ctx context.Context, fileID string) (string, e
 	}
 	defer resp.Body.Close()
 
-	data, err := io.ReadAll(resp.Body)
+	const maxTranscriptBytes = 50 * 1024 * 1024 // 50 MB
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxTranscriptBytes))
 	if err != nil {
 		return "", fmt.Errorf("reading exported content for file %s: %w", fileID, err)
+	}
+	if int64(len(data)) >= maxTranscriptBytes {
+		return "", fmt.Errorf("exported content for file %s exceeded %d byte limit", fileID, maxTranscriptBytes)
 	}
 
 	content := strings.TrimSpace(string(data))

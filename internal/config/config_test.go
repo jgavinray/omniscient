@@ -68,7 +68,7 @@ func baseValidConfig() Config {
 		Google: GoogleConfig{
 			CredentialsFile: "/opt/omniscient/credentials.json",
 			TokenFile:       "/opt/omniscient/token.json",
-			FolderID:        "abc123",
+			FolderID:        "1aBcDeFgHiJkLmN",
 		},
 		LLM: LLMConfig{
 			Provider:      "openai-compatible",

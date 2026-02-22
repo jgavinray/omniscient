@@ -9,11 +9,13 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sync"
+	"time"
 
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
@@ -120,12 +122,15 @@ func RunAuthFlow(credentialsPath, tokenPath string) (*oauth2.Token, error) {
 
 		code := r.URL.Query().Get("code")
 		if code == "" {
-			errMsg := r.URL.Query().Get("error")
-			if errMsg == "" {
-				errMsg = "no authorization code in callback"
+			rawProviderError := r.URL.Query().Get("error")
+			if rawProviderError != "" {
+				slog.Warn("OAuth2 provider returned error", "error", rawProviderError)
 			}
-			http.Error(w, "Authorization failed: "+errMsg, http.StatusBadRequest)
-			errCh <- fmt.Errorf("OAuth callback error: %s", errMsg)
+			http.Error(w, "Authorization failed. Check application logs for details.", http.StatusBadRequest)
+			if rawProviderError == "" {
+				rawProviderError = "no authorization code in callback"
+			}
+			errCh <- fmt.Errorf("OAuth callback error from provider: %s", rawProviderError)
 			return
 		}
 
@@ -138,7 +143,12 @@ func RunAuthFlow(credentialsPath, tokenPath string) (*oauth2.Token, error) {
 		return nil, fmt.Errorf("starting callback listener on localhost:8085: %w", err)
 	}
 
-	server := &http.Server{Handler: mux}
+	server := &http.Server{
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      10 * time.Second,
+	}
 
 	// Run the server in the background.
 	go func() {
@@ -154,7 +164,11 @@ func RunAuthFlow(credentialsPath, tokenPath string) (*oauth2.Token, error) {
 		fmt.Printf("Please open the following URL in your browser:\n\n%s\n\n", authURL)
 	}
 
-	// Wait for the authorization code or an error.
+	// Wait for the authorization code, an error, or a timeout.
+	authTimeout := 5 * time.Minute
+	authTimer := time.NewTimer(authTimeout)
+	defer authTimer.Stop()
+
 	var code string
 	select {
 	case code = <-codeCh:
@@ -162,6 +176,9 @@ func RunAuthFlow(credentialsPath, tokenPath string) (*oauth2.Token, error) {
 	case err := <-errCh:
 		_ = server.Shutdown(context.Background())
 		return nil, err
+	case <-authTimer.C:
+		_ = server.Shutdown(context.Background())
+		return nil, fmt.Errorf("OAuth2 flow timed out after %s waiting for browser consent", authTimeout)
 	}
 
 	// Shut down the callback server.
@@ -183,25 +200,35 @@ func RunAuthFlow(credentialsPath, tokenPath string) (*oauth2.Token, error) {
 }
 
 // openBrowser opens the given URL in the user's default browser.
-func openBrowser(url string) error {
+// Only HTTPS URLs are allowed for safety.
+func openBrowser(rawURL string) error {
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Scheme != "https" {
+		return fmt.Errorf("refusing to open non-https URL in browser")
+	}
+
 	var cmd *exec.Cmd
 
 	switch runtime.GOOS {
 	case "darwin":
-		cmd = exec.Command("open", url)
+		cmd = exec.Command("open", rawURL)
 	case "linux":
-		cmd = exec.Command("xdg-open", url)
+		cmd = exec.Command("xdg-open", rawURL)
 	default:
 		return fmt.Errorf("unsupported platform %s for browser open", runtime.GOOS)
 	}
 
-	return cmd.Start()
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	go func() { _ = cmd.Wait() }()
+	return nil
 }
 
 // getTokenSource returns an oauth2.TokenSource that auto-refreshes the token.
 // When a new token is obtained via refresh, it is automatically saved to tokenPath.
-func getTokenSource(config *oauth2.Config, tokenPath string, token *oauth2.Token) oauth2.TokenSource {
-	baseSource := config.TokenSource(context.Background(), token)
+func getTokenSource(ctx context.Context, config *oauth2.Config, tokenPath string, token *oauth2.Token) oauth2.TokenSource {
+	baseSource := config.TokenSource(ctx, token)
 	return &savingTokenSource{
 		base:      baseSource,
 		tokenPath: tokenPath,

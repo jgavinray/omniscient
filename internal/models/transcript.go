@@ -48,6 +48,12 @@ func ParseExtractionOutput(raw string) (*ExtractionResult, error) {
 	yamlBlock := rest[:closingIdx]
 	body := rest[closingIdx+4:] // skip \n---
 
+	// Cap YAML front-matter size to prevent resource exhaustion.
+	const maxFrontMatterBytes = 64 * 1024 // 64 KB
+	if len(yamlBlock) > maxFrontMatterBytes {
+		return nil, fmt.Errorf("YAML front-matter block exceeds %d bytes", maxFrontMatterBytes)
+	}
+
 	// Parse YAML front-matter.
 	var fm map[string]any
 	if err := yaml.Unmarshal([]byte(yamlBlock), &fm); err != nil {

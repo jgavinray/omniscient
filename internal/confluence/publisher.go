@@ -36,6 +36,9 @@ func NewClient(baseURL, email, apiToken string) *Client {
 		apiToken: apiToken,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				return fmt.Errorf("unexpected redirect to %s", req.URL)
+			},
 		},
 	}
 }
@@ -103,7 +106,11 @@ func (c *Client) PublishMarkdown(ctx context.Context, spaceKey, parentPageID str
 		}
 	}
 
-	pageURL := c.baseURL + pageRes.Links.WebUI
+	webUI := pageRes.Links.WebUI
+	if !strings.HasPrefix(webUI, "/") {
+		return "", fmt.Errorf("unexpected WebUI path from Confluence API: %q", webUI)
+	}
+	pageURL := c.baseURL + webUI
 	slog.Info("published confluence page", "url", pageURL)
 	return pageURL, nil
 }
@@ -184,7 +191,7 @@ func (c *Client) updatePage(ctx context.Context, pageID, title, body string, ver
 		},
 	}
 
-	path := fmt.Sprintf("/wiki/rest/api/content/%s", pageID)
+	path := "/wiki/rest/api/content/" + url.PathEscape(pageID)
 
 	respBody, err := c.doRequest(ctx, http.MethodPut, path, payload)
 	if err != nil {
@@ -235,10 +242,14 @@ func (c *Client) doRequest(ctx context.Context, method, urlPath string, body int
 			return fmt.Errorf("execute request: %w", err)
 		}
 
-		respBody, err := io.ReadAll(resp.Body)
+		const maxResponseBytes = 1 * 1024 * 1024 // 1 MB
+		respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 		resp.Body.Close()
 		if err != nil {
 			return fmt.Errorf("read response body: %w", err)
+		}
+		if int64(len(respBody)) >= maxResponseBytes {
+			return fmt.Errorf("confluence response exceeded %d byte limit", maxResponseBytes)
 		}
 
 		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
@@ -250,7 +261,7 @@ func (c *Client) doRequest(ctx context.Context, method, urlPath string, body int
 
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			return fmt.Errorf("confluence API returned status %d: %s",
-				resp.StatusCode, string(respBody))
+				resp.StatusCode, retry.TruncateBody(string(respBody)))
 		}
 
 		result = respBody

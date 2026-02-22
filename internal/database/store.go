@@ -20,7 +20,7 @@ type Store struct {
 // parent directory exists, creates the schema if needed, and enables WAL mode.
 func NewStore(dbPath string) (*Store, error) {
 	dir := filepath.Dir(dbPath)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("create database directory %s: %w", dir, err)
 	}
 

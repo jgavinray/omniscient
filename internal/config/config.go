@@ -2,8 +2,11 @@ package config
 
 import (
 	"fmt"
+	"io"
 	"net/url"
 	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -81,12 +84,50 @@ type LoggingConfig struct {
 	File  string `yaml:"file"`
 }
 
+// validateURL checks that u is a valid URL with an allowed scheme.
+func validateURL(field, u string, allowedSchemes []string) error {
+	parsed, err := url.ParseRequestURI(u)
+	if err != nil {
+		return fmt.Errorf("%s is not a valid URL: %w", field, err)
+	}
+	for _, s := range allowedSchemes {
+		if parsed.Scheme == s {
+			return nil
+		}
+	}
+	return fmt.Errorf("%s scheme must be one of %v, got %q", field, allowedSchemes, parsed.Scheme)
+}
+
+// validateFilePath checks that a config path field is non-empty and absolute.
+func validateFilePath(field, path string) error {
+	if path == "" {
+		return fmt.Errorf("%s must not be empty", field)
+	}
+	cleaned := filepath.Clean(path)
+	if !filepath.IsAbs(cleaned) {
+		return fmt.Errorf("%s must be an absolute path, got %q", field, path)
+	}
+	return nil
+}
+
+// driveIDPattern matches valid Google Drive folder/file IDs.
+var driveIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_\-]{10,}$`)
+
 // Load reads a YAML configuration file from the given path, unmarshals it into
 // a Config struct, applies defaults, and validates all required fields.
 func Load(path string) (*Config, error) {
-	data, err := os.ReadFile(path)
+	const maxConfigBytes = 1 * 1024 * 1024 // 1 MB
+	f, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("reading config file %s: %w", path, err)
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, maxConfigBytes))
+	if err != nil {
+		return nil, fmt.Errorf("reading config file %s: %w", path, err)
+	}
+	if int64(len(data)) >= maxConfigBytes {
+		return nil, fmt.Errorf("config file %s exceeds %d byte limit", path, maxConfigBytes)
 	}
 
 	var cfg Config
@@ -129,14 +170,17 @@ func (c *Config) applyDefaults() {
 // first validation failure encountered. Defaults must be applied before calling.
 func (c *Config) validate() error {
 	// Google config validation.
-	if c.Google.CredentialsFile == "" {
-		return fmt.Errorf("google.credentials_file must not be empty")
+	if err := validateFilePath("google.credentials_file", c.Google.CredentialsFile); err != nil {
+		return err
 	}
-	if c.Google.TokenFile == "" {
-		return fmt.Errorf("google.token_file must not be empty")
+	if err := validateFilePath("google.token_file", c.Google.TokenFile); err != nil {
+		return err
 	}
 	if c.Google.FolderID == "" {
 		return fmt.Errorf("google.folder_id must not be empty")
+	}
+	if !driveIDPattern.MatchString(c.Google.FolderID) {
+		return fmt.Errorf("google.folder_id contains unexpected characters; expected an alphanumeric Google Drive ID")
 	}
 
 	// LLM config validation.
@@ -152,8 +196,8 @@ func (c *Config) validate() error {
 		if c.LLM.OpenAIBaseURL == "" {
 			return fmt.Errorf("llm.openai_base_url is required when provider is openai-compatible")
 		}
-		if _, err := url.ParseRequestURI(c.LLM.OpenAIBaseURL); err != nil {
-			return fmt.Errorf("llm.openai_base_url is not a valid URL: %w", err)
+		if err := validateURL("llm.openai_base_url", c.LLM.OpenAIBaseURL, []string{"http", "https"}); err != nil {
+			return err
 		}
 	default:
 		return fmt.Errorf("llm.provider must be \"anthropic\" or \"openai-compatible\", got %q", c.LLM.Provider)
@@ -168,8 +212,8 @@ func (c *Config) validate() error {
 		if c.Confluence.BaseURL == "" {
 			return fmt.Errorf("confluence.base_url must not be empty")
 		}
-		if _, err := url.ParseRequestURI(c.Confluence.BaseURL); err != nil {
-			return fmt.Errorf("confluence.base_url is not a valid URL: %w", err)
+		if err := validateURL("confluence.base_url", c.Confluence.BaseURL, []string{"https"}); err != nil {
+			return err
 		}
 		if c.Confluence.Email == "" {
 			return fmt.Errorf("confluence.email must not be empty")
