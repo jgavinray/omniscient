@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -253,5 +255,257 @@ func TestConfigValidate_ExampleConfig(t *testing.T) {
 
 	if cfg.LLM.Provider != "openai-compatible" {
 		t.Errorf("expected provider openai-compatible, got %s", cfg.LLM.Provider)
+	}
+}
+
+// --- CLI command tests ---
+
+// tempYAML writes a minimal valid config YAML with the given database_path
+// and returns the path to the file.
+func tempYAML(t *testing.T, dbPath string) string {
+	t.Helper()
+	dir := t.TempDir()
+	content := fmt.Sprintf(`google:
+  credentials_file: /opt/omniscient/credentials.json
+  token_file: /opt/omniscient/token.json
+  folder_id: abc123folderID
+llm:
+  provider: openai-compatible
+  openai_base_url: http://localhost:11434/v1
+  openai_api_key: test-key-123
+  model: llama3:70b
+  timeout: 90
+confluence:
+  base_url: https://mycompany.atlassian.net/wiki
+  email: user@example.com
+  api_token: confluence-token-xyz
+  space_key: ENG
+  parent_page_id: "12345"
+sync:
+  lookback_hours: 48
+  database_path: %s
+  max_per_run: 25
+logging:
+  level: debug
+prompts:
+  classify_prompt: "Classify this meeting: {{TEMPLATE_KEYS}}\n{{TRANSCRIPT_PREVIEW}}"
+  templates:
+    engineering:
+      description: "Engineering meetings"
+      extraction_prompt: "Extract notes from this engineering transcript:\n{{TRANSCRIPT}}"
+`, dbPath)
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("failed to write temp config file: %v", err)
+	}
+	return path
+}
+
+func setTestConfig(t *testing.T, path string) {
+	t.Helper()
+	old := cfgFile
+	cfgFile = path
+	t.Cleanup(func() { cfgFile = old })
+}
+
+func TestStatusCmd_EmptyDB(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	configPath := tempYAML(t, dbPath)
+	setTestConfig(t, configPath)
+
+	cmd := newStatusCmd()
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("status command failed: %v", err)
+	}
+
+	output := buf.String()
+	// All five statuses should appear with count 0.
+	for _, status := range []string{
+		database.StatusDiscovered,
+		database.StatusExtracted,
+		database.StatusFailed,
+		database.StatusPublished,
+		database.StatusSkipped,
+	} {
+		if !strings.Contains(output, status) {
+			t.Errorf("output missing status %q", status)
+		}
+		// Each status line should have a 0 count.
+		if !strings.Contains(output, fmt.Sprintf("%s\t0\n", status)) {
+			t.Errorf("expected zero count line for %q, got:\n%s", status, output)
+		}
+	}
+}
+
+func TestStatusCmd_WithRows(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	configPath := tempYAML(t, dbPath)
+	setTestConfig(t, configPath)
+
+	store, err := database.NewStore(dbPath)
+	if err != nil {
+		t.Fatalf("create store: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+
+	// Insert a discovered transcript.
+	if err := store.MarkDiscovered(ctx, "doc-001", "Meeting 1"); err != nil {
+		t.Fatalf("MarkDiscovered: %v", err)
+	}
+
+	// Insert a failed transcript.
+	if err := store.MarkFailed(ctx, "doc-002", "Meeting 2", "extraction error"); err != nil {
+		t.Fatalf("MarkFailed: %v", err)
+	}
+
+	// Insert a published transcript.
+	if err := store.MarkProcessed(ctx, "doc-003", "Meeting 3", "https://confluence.example.com/page"); err != nil {
+		t.Fatalf("MarkProcessed: %v", err)
+	}
+
+	cmd := newStatusCmd()
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("status command failed: %v", err)
+	}
+
+	output := buf.String()
+
+	// Verify counts: 1 discovered, 1 failed, 1 published, 0 extracted, 0 skipped.
+	if !strings.Contains(output, "discovered\t1\n") {
+		t.Errorf("expected discovered count 1, got:\n%s", output)
+	}
+	if !strings.Contains(output, "failed\t1\n") {
+		t.Errorf("expected failed count 1, got:\n%s", output)
+	}
+	if !strings.Contains(output, "published\t1\n") {
+		t.Errorf("expected published count 1, got:\n%s", output)
+	}
+	if !strings.Contains(output, "extracted\t0\n") {
+		t.Errorf("expected extracted count 0, got:\n%s", output)
+	}
+	if !strings.Contains(output, "skipped\t0\n") {
+		t.Errorf("expected skipped count 0, got:\n%s", output)
+	}
+
+	// Verify recent rows appear.
+	if !strings.Contains(output, "doc-001") || !strings.Contains(output, "doc-002") || !strings.Contains(output, "doc-003") {
+		t.Errorf("expected recent rows for all three transcripts, got:\n%s", output)
+	}
+}
+
+func TestRetryFailedCmd(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	configPath := tempYAML(t, dbPath)
+	setTestConfig(t, configPath)
+
+	store, err := database.NewStore(dbPath)
+	if err != nil {
+		t.Fatalf("create store: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+
+	// Insert a failed transcript.
+	if err := store.MarkFailed(ctx, "doc-001", "Meeting 1", "some error"); err != nil {
+		t.Fatalf("MarkFailed: %v", err)
+	}
+
+	// Insert a published transcript (should NOT be affected).
+	if err := store.MarkProcessed(ctx, "doc-002", "Meeting 2", "https://confluence.example.com/page"); err != nil {
+		t.Fatalf("MarkProcessed: %v", err)
+	}
+
+	cmd := newRetryFailedCmd()
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("retry-failed command failed: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "retry-failed\t1\n") {
+		t.Errorf("expected 'retry-failed\t1', got:\n%s", output)
+	}
+
+	// Verify failed → discovered.
+	rec, err := store.GetTranscript(ctx, "doc-001")
+	if err != nil {
+		t.Fatalf("GetTranscript: %v", err)
+	}
+	if rec.Status != database.StatusDiscovered {
+		t.Errorf("expected doc-001 status %q, got %q", database.StatusDiscovered, rec.Status)
+	}
+
+	// Verify published stays published.
+	rec, err = store.GetTranscript(ctx, "doc-002")
+	if err != nil {
+		t.Fatalf("GetTranscript: %v", err)
+	}
+	if rec.Status != database.StatusPublished {
+		t.Errorf("expected doc-002 status %q, got %q", database.StatusPublished, rec.Status)
+	}
+}
+
+func TestForgetCmd(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	configPath := tempYAML(t, dbPath)
+	setTestConfig(t, configPath)
+
+	store, err := database.NewStore(dbPath)
+	if err != nil {
+		t.Fatalf("create store: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+
+	// Insert two transcripts.
+	if err := store.MarkDiscovered(ctx, "doc-001", "Meeting 1"); err != nil {
+		t.Fatalf("MarkDiscovered: %v", err)
+	}
+	if err := store.MarkDiscovered(ctx, "doc-002", "Meeting 2"); err != nil {
+		t.Fatalf("MarkDiscovered: %v", err)
+	}
+
+	cmd := newForgetCmd()
+	cmd.SetArgs([]string{"doc-001"})
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("forget command failed: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "forget\tdoc-001\t1\n") {
+		t.Errorf("expected 'forget\tdoc-001\t1', got:\n%s", output)
+	}
+
+	// Verify doc-001 is deleted.
+	rec, err := store.GetTranscript(ctx, "doc-001")
+	if err != nil {
+		t.Fatalf("GetTranscript: %v", err)
+	}
+	if rec != nil {
+		t.Errorf("expected doc-001 to be deleted, got %+v", rec)
+	}
+
+	// Verify doc-002 is still present.
+	rec, err = store.GetTranscript(ctx, "doc-002")
+	if err != nil {
+		t.Fatalf("GetTranscript: %v", err)
+	}
+	if rec == nil {
+		t.Error("expected doc-002 to still exist")
 	}
 }

@@ -1,10 +1,40 @@
 package llm
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
 )
+
+// withImmediateRetries replaces retryableCtx with an immediate (no-sleep)
+// version for use in tests. It restores the original on cleanup.
+func withImmediateRetries(t *testing.T) func() {
+	t.Helper()
+	old := retryableCtx
+	retryableCtx = func(ctx context.Context, fn func() error, maxAttempts int) error {
+		var lastErr error
+		for attempt := 0; attempt < maxAttempts; attempt++ {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			lastErr = fn()
+			if lastErr == nil {
+				return nil
+			}
+			if !isTransient(lastErr) {
+				return lastErr
+			}
+		}
+		return fmt.Errorf("all %d attempts failed, last error: %w", maxAttempts, lastErr)
+	}
+	t.Cleanup(func() {
+		retryableCtx = old
+	})
+	return func() {
+		retryableCtx = old
+	}
+}
 
 func TestCleanResponse_Plain(t *testing.T) {
 	input := `{"meeting_type": "standup"}`

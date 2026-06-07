@@ -98,6 +98,24 @@ func validateURL(field, u string, allowedSchemes []string) error {
 	return fmt.Errorf("%s scheme must be one of %v, got %q", field, allowedSchemes, parsed.Scheme)
 }
 
+// validateConfluencePath ensures the base URL path is either empty or exactly
+// "/wiki", rejecting unrelated pathful URLs such as https://host/foo.
+func validateConfluencePath(u string) error {
+	parsed, err := url.ParseRequestURI(u)
+	if err != nil {
+		return fmt.Errorf("confluence.base_url is not a valid URL: %w", err)
+	}
+	path := parsed.Path
+	// Strip trailing slash for comparison.
+	if len(path) > 1 && strings.HasSuffix(path, "/") {
+		path = strings.TrimSuffix(path, "/")
+	}
+	if path != "" && path != "/wiki" {
+		return fmt.Errorf("confluence.base_url path must be empty or \"/wiki\", got %q", parsed.Path)
+	}
+	return nil
+}
+
 // validateFilePath checks that a config path field is non-empty and absolute.
 func validateFilePath(field, path string) error {
 	if path == "" {
@@ -215,6 +233,9 @@ func (c *Config) validate() error {
 		if err := validateURL("confluence.base_url", c.Confluence.BaseURL, []string{"https"}); err != nil {
 			return err
 		}
+		if err := validateConfluencePath(c.Confluence.BaseURL); err != nil {
+			return err
+		}
 		if c.Confluence.Email == "" {
 			return fmt.Errorf("confluence.email must not be empty")
 		}
@@ -246,6 +267,44 @@ func (c *Config) validate() error {
 	}
 	if !validLevels[c.Logging.Level] {
 		return fmt.Errorf("logging.level must be one of debug, info, warn, error; got %q", c.Logging.Level)
+	}
+
+	// Prompt template validation.
+	if err := c.validatePrompts(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// validatePrompts checks that classify_prompt and all template extraction
+// prompts contain the required placeholder tokens.
+func (c *Config) validatePrompts() error {
+	// classify_prompt must contain both required placeholders.
+	if !strings.Contains(c.Prompts.ClassifyPrompt, "{{TEMPLATE_KEYS}}") {
+		return fmt.Errorf("prompts.classify_prompt must contain {{TEMPLATE_KEYS}}")
+	}
+	if !strings.Contains(c.Prompts.ClassifyPrompt, "{{TRANSCRIPT_PREVIEW}}") {
+		return fmt.Errorf("prompts.classify_prompt must contain {{TRANSCRIPT_PREVIEW}}")
+	}
+
+	// At least one template must exist.
+	if len(c.Prompts.Templates) == 0 {
+		return fmt.Errorf("prompts.templates must contain at least one entry")
+	}
+
+	// Every template key must be non-empty after trimming whitespace.
+	for key := range c.Prompts.Templates {
+		if strings.TrimSpace(key) == "" {
+			return fmt.Errorf("prompts.templates must not have an empty key")
+		}
+	}
+
+	// Every template extraction prompt must contain {{TRANSCRIPT}}.
+	for key, tmpl := range c.Prompts.Templates {
+		if !strings.Contains(tmpl.ExtractionPrompt, "{{TRANSCRIPT}}") {
+			return fmt.Errorf("prompts.templates[%s].extraction_prompt must contain {{TRANSCRIPT}}", key)
+		}
 	}
 
 	return nil

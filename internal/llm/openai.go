@@ -78,7 +78,7 @@ func (e *OpenAIExtractor) callAPI(ctx context.Context, prompt string, maxTokens 
 
 	var responseText string
 
-	err = retryable(func() error {
+	err = retryableCtx(ctx, func() error {
 		req, err := http.NewRequestWithContext(ctx, "POST", e.baseURL+"/chat/completions", bytes.NewReader(jsonData))
 		if err != nil {
 			return fmt.Errorf("creating openai request: %w", err)
@@ -103,10 +103,14 @@ func (e *OpenAIExtractor) callAPI(ctx context.Context, prompt string, maxTokens 
 		}
 
 		if resp.StatusCode != http.StatusOK {
-			return &httpError{
+			err := &httpError{
 				StatusCode: resp.StatusCode,
 				Message:    truncateBody(string(body)),
 			}
+			if retryAfter, ok := parseRetryAfter(resp.Header.Get("Retry-After")); ok {
+				err.RetryAfter = retryAfter
+			}
+			return err
 		}
 
 		var apiResp openaiResponse

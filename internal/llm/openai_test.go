@@ -63,6 +63,7 @@ func TestOpenAIExtract_EmptyChoices(t *testing.T) {
 }
 
 func TestOpenAIExtract_ServerError(t *testing.T) {
+	withImmediateRetries(t)
 	var callCount atomic.Int32
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -95,6 +96,7 @@ func TestOpenAIExtract_ServerError(t *testing.T) {
 }
 
 func TestOpenAIExtract_RateLimit(t *testing.T) {
+	withImmediateRetries(t)
 	var callCount atomic.Int32
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

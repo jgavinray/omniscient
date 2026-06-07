@@ -91,6 +91,15 @@ func baseValidConfig() Config {
 		Logging: LoggingConfig{
 			Level: "info",
 		},
+		Prompts: PromptsConfig{
+			ClassifyPrompt: "Classify meeting: {{TEMPLATE_KEYS}} {{TRANSCRIPT_PREVIEW}}",
+			Templates: map[string]MeetingTemplate{
+				"engineering": {
+					Description:      "Engineering standups and design reviews",
+					ExtractionPrompt: "Extract notes: {{TRANSCRIPT}}",
+				},
+			},
+		},
 	}
 }
 
@@ -448,6 +457,51 @@ func TestValidate_ConfluenceDisabledSkipsValidation(t *testing.T) {
 	}
 }
 
+func TestValidate_ConfluencePathAcceptsEmpty(t *testing.T) {
+	cfg := baseValidConfig()
+	cfg.Confluence.BaseURL = "https://mycompany.atlassian.net"
+	err := cfg.validate()
+	if err != nil {
+		t.Fatalf("validate() expected no error for base_url with no path, got: %v", err)
+	}
+}
+
+func TestValidate_ConfluencePathAcceptsWiki(t *testing.T) {
+	cfg := baseValidConfig()
+	cfg.Confluence.BaseURL = "https://mycompany.atlassian.net/wiki"
+	err := cfg.validate()
+	if err != nil {
+		t.Fatalf("validate() expected no error for base_url with /wiki path, got: %v", err)
+	}
+}
+
+func TestValidate_ConfluencePathRejectsOther(t *testing.T) {
+	cfg := baseValidConfig()
+	cfg.Confluence.BaseURL = "https://mycompany.atlassian.net/foo"
+	err := cfg.validate()
+	if err == nil {
+		t.Fatal("validate() expected error for base_url with non-empty, non-/wiki path, got nil")
+	}
+	if !strings.Contains(err.Error(), "confluence.base_url") {
+		t.Errorf("error = %q, want it to mention %q", err.Error(), "confluence.base_url")
+	}
+}
+
+func TestValidate_ConfluenceDisabledSkipsPathValidation(t *testing.T) {
+	cfg := baseValidConfig()
+	f := false
+	cfg.Confluence.Enabled = &f
+	cfg.Confluence.BaseURL = "https://mycompany.atlassian.net/foo"
+	cfg.Confluence.Email = ""
+	cfg.Confluence.APIToken = ""
+	cfg.Confluence.SpaceKey = ""
+
+	err := cfg.validate()
+	if err != nil {
+		t.Fatalf("validate() should pass when confluence is disabled, got: %v", err)
+	}
+}
+
 func TestValidate_ConfluenceEnabledByDefault(t *testing.T) {
 	cfg := baseValidConfig()
 	// Enabled is nil (default) — should still validate confluence fields.
@@ -485,6 +539,9 @@ func TestValidate_PromptsLoadedFromYAML(t *testing.T) {
 
 func TestValidate_DefaultPromptsPopulated(t *testing.T) {
 	cfg := baseValidConfig()
+	// Clear prompts so applyDefaults populates the defaults.
+	cfg.Prompts.ClassifyPrompt = ""
+	cfg.Prompts.Templates = nil
 	// No prompts section — defaults should be populated by applyDefaults.
 	cfg.applyDefaults()
 	err := cfg.validate()
@@ -518,5 +575,95 @@ func TestValidate_InvalidLogLevel(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "trace") {
 		t.Errorf("error = %q, want it to mention the invalid value %q", err.Error(), "trace")
+	}
+}
+
+func TestValidate_ClassifyPromptMissingTemplateKeys(t *testing.T) {
+	cfg := baseValidConfig()
+	cfg.Prompts.ClassifyPrompt = "Classify meeting: {{TRANSCRIPT_PREVIEW}}"
+
+	err := cfg.validate()
+	if err == nil {
+		t.Fatal("validate() expected error when classify_prompt is missing {{TEMPLATE_KEYS}}, got nil")
+	}
+	if !strings.Contains(err.Error(), "{{TEMPLATE_KEYS}}") {
+		t.Errorf("error = %q, want it to mention %q", err.Error(), "{{TEMPLATE_KEYS}}")
+	}
+}
+
+func TestValidate_ClassifyPromptMissingTranscriptPreview(t *testing.T) {
+	cfg := baseValidConfig()
+	cfg.Prompts.ClassifyPrompt = "Classify meeting: {{TEMPLATE_KEYS}}"
+
+	err := cfg.validate()
+	if err == nil {
+		t.Fatal("validate() expected error when classify_prompt is missing {{TRANSCRIPT_PREVIEW}}, got nil")
+	}
+	if !strings.Contains(err.Error(), "{{TRANSCRIPT_PREVIEW}}") {
+		t.Errorf("error = %q, want it to mention %q", err.Error(), "{{TRANSCRIPT_PREVIEW}}")
+	}
+}
+
+func TestValidate_ExtractionPromptMissingTranscript(t *testing.T) {
+	cfg := baseValidConfig()
+	cfg.Prompts.Templates["engineering"] = MeetingTemplate{
+		Description:      "Engineering standups and design reviews",
+		ExtractionPrompt: "Extract notes without transcript",
+	}
+
+	err := cfg.validate()
+	if err == nil {
+		t.Fatal("validate() expected error when extraction_prompt is missing {{TRANSCRIPT}}, got nil")
+	}
+	if !strings.Contains(err.Error(), "engineering") {
+		t.Errorf("error = %q, want it to mention the template key %q", err.Error(), "engineering")
+	}
+	if !strings.Contains(err.Error(), "{{TRANSCRIPT}}") {
+		t.Errorf("error = %q, want it to mention %q", err.Error(), "{{TRANSCRIPT}}")
+	}
+}
+
+func TestValidate_EmptyTemplateKey(t *testing.T) {
+	cfg := baseValidConfig()
+	cfg.Prompts.Templates[""] = MeetingTemplate{
+		Description:      "empty key template",
+		ExtractionPrompt: "TRANSCRIPT: {{TRANSCRIPT}}",
+	}
+
+	err := cfg.validate()
+	if err == nil {
+		t.Fatal("validate() expected error for empty template key, got nil")
+	}
+	if !strings.Contains(err.Error(), "empty key") {
+		t.Errorf("error = %q, want it to mention %q", err.Error(), "empty key")
+	}
+}
+
+func TestValidate_WhitespaceTemplateKey(t *testing.T) {
+	cfg := baseValidConfig()
+	cfg.Prompts.Templates["   "] = MeetingTemplate{
+		Description:      "whitespace key template",
+		ExtractionPrompt: "TRANSCRIPT: {{TRANSCRIPT}}",
+	}
+
+	err := cfg.validate()
+	if err == nil {
+		t.Fatal("validate() expected error for whitespace-only template key, got nil")
+	}
+	if !strings.Contains(err.Error(), "empty key") {
+		t.Errorf("error = %q, want it to mention %q", err.Error(), "empty key")
+	}
+}
+
+func TestValidate_ZeroTemplates(t *testing.T) {
+	cfg := baseValidConfig()
+	cfg.Prompts.Templates = nil
+
+	err := cfg.validate()
+	if err == nil {
+		t.Fatal("validate() expected error when no templates are present, got nil")
+	}
+	if !strings.Contains(err.Error(), "at least one entry") {
+		t.Errorf("error = %q, want it to mention %q", err.Error(), "at least one entry")
 	}
 }

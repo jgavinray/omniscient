@@ -3,6 +3,7 @@ package confluence
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/jgavinray/omniscient/internal/models"
+	"github.com/jgavinray/omniscient/internal/retry"
 )
 
 // sampleExtractionResult returns a fully populated ExtractionResult for use in tests.
@@ -34,6 +36,64 @@ func successPageResponse(id string, version int) []byte {
 
 	data, _ := json.Marshal(result)
 	return data
+}
+
+func withImmediateConfluenceRetries(t *testing.T) {
+	t.Helper()
+	old := retryDoContext
+	retryDoContext = func(ctx context.Context, fn func() error, maxAttempts int) error {
+		var lastErr error
+		for attempt := 0; attempt < maxAttempts; attempt++ {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			lastErr = fn()
+			if lastErr == nil {
+				return nil
+			}
+			if !retry.IsTransient(lastErr) {
+				return lastErr
+			}
+		}
+		return fmt.Errorf("all %d attempts failed, last error: %w", maxAttempts, lastErr)
+	}
+	t.Cleanup(func() {
+		retryDoContext = old
+	})
+}
+
+func TestPublishMarkdown_URLNormalization(t *testing.T) {
+	ctx := context.Background()
+
+	var capturedPath string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(successPageResponse("456", 1))
+	}))
+	defer server.Close()
+
+	// Pass a base URL with a trailing "/wiki" segment.
+	client := NewClient(server.URL+"/wiki", "test@example.com", "test-token")
+	result := sampleExtractionResult()
+
+	pageURL, err := client.PublishMarkdown(ctx, "ENG", "100", result, "URL Norm Test.gdoc")
+	if err != nil {
+		t.Fatalf("PublishMarkdown returned unexpected error: %v", err)
+	}
+
+	// The client strips the trailing "/wiki" from the base URL, so the
+	// create request path should be "/wiki/rest/api/content" (not "/wiki/wiki/rest/api/content").
+	if capturedPath != "/wiki/rest/api/content" {
+		t.Errorf("expected path /wiki/rest/api/content, got %s", capturedPath)
+	}
+
+	// The returned pageURL must be server.URL + "/wiki/spaces/ENG/pages/456" exactly once.
+	expectedURL := server.URL + "/wiki/spaces/ENG/pages/456"
+	if pageURL != expectedURL {
+		t.Errorf("expected URL %s, got %s", expectedURL, pageURL)
+	}
 }
 
 func TestPublishMarkdown_CreateNewPage(t *testing.T) {
@@ -264,6 +324,7 @@ func TestExtractDate_MissingFallsBackToToday(t *testing.T) {
 }
 
 func TestPublishMarkdown_ServerError_Retry(t *testing.T) {
+	withImmediateConfluenceRetries(t)
 	ctx := context.Background()
 	var requestCount atomic.Int32
 
@@ -313,6 +374,7 @@ func TestPublishMarkdown_ServerError_Retry(t *testing.T) {
 }
 
 func TestPublishMarkdown_RateLimit_Retry(t *testing.T) {
+	withImmediateConfluenceRetries(t)
 	ctx := context.Background()
 	var requestCount atomic.Int32
 

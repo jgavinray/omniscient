@@ -72,7 +72,7 @@ func (e *AnthropicExtractor) callAPI(ctx context.Context, prompt string, maxToke
 
 	var responseText string
 
-	err = retryable(func() error {
+	err = retryableCtx(ctx, func() error {
 		req, err := http.NewRequestWithContext(ctx, "POST", e.baseURL+"/v1/messages", bytes.NewReader(jsonData))
 		if err != nil {
 			return fmt.Errorf("creating anthropic request: %w", err)
@@ -98,10 +98,14 @@ func (e *AnthropicExtractor) callAPI(ctx context.Context, prompt string, maxToke
 		}
 
 		if resp.StatusCode != http.StatusOK {
-			return &httpError{
+			err := &httpError{
 				StatusCode: resp.StatusCode,
 				Message:    truncateBody(string(body)),
 			}
+			if retryAfter, ok := parseRetryAfter(resp.Header.Get("Retry-After")); ok {
+				err.RetryAfter = retryAfter
+			}
+			return err
 		}
 
 		var apiResp anthropicResponse

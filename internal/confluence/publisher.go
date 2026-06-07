@@ -27,11 +27,23 @@ type Client struct {
 	httpClient *http.Client
 }
 
+// retryDoContext is a package-level variable for retry.DoContext, allowing tests
+// to swap in an immediate (no-sleep) implementation for faster test execution.
+var retryDoContext = retry.DoContext
+
 // NewClient creates a new Confluence API client.
-// It trims any trailing slash from baseURL and configures an HTTP client with a 30-second timeout.
+// It normalizes the base URL by removing a trailing "/wiki" segment (if present)
+// so that API paths like "/wiki/rest/api/content" are appended correctly.
+// It also trims any trailing slash and configures an HTTP client with a 30-second timeout.
 func NewClient(baseURL, email, apiToken string) *Client {
+	// Normalize: remove trailing slash, then remove exactly one trailing "/wiki" segment.
+	path := baseURL
+	path = strings.TrimRight(path, "/")
+	if strings.HasSuffix(path, "/wiki") {
+		path = strings.TrimSuffix(path, "/wiki")
+	}
 	return &Client{
-		baseURL:  strings.TrimRight(baseURL, "/"),
+		baseURL:  path,
 		email:    email,
 		apiToken: apiToken,
 		httpClient: &http.Client{
@@ -216,7 +228,7 @@ func (c *Client) doRequest(ctx context.Context, method, urlPath string, body int
 
 	var result []byte
 
-	err := retry.Do(func() error {
+	err := retryDoContext(ctx, func() error {
 		var reqBody io.Reader
 		if body != nil {
 			jsonData, err := json.Marshal(body)
@@ -253,10 +265,15 @@ func (c *Client) doRequest(ctx context.Context, method, urlPath string, body int
 		}
 
 		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
-			return &retry.HTTPError{
+			retryAfter, ok := retry.ParseRetryAfter(resp.Header.Get("Retry-After"))
+			err := &retry.HTTPError{
 				StatusCode: resp.StatusCode,
 				Message:    string(respBody),
 			}
+			if ok {
+				err.RetryAfter = retryAfter
+			}
+			return err
 		}
 
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {

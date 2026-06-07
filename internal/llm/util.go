@@ -1,7 +1,9 @@
 package llm
 
 import (
+	"context"
 	"strings"
+	"time"
 
 	"github.com/jgavinray/omniscient/internal/models"
 	"github.com/jgavinray/omniscient/internal/retry"
@@ -37,6 +39,14 @@ func retryable(fn func() error, maxAttempts int) error {
 	return retry.Do(fn, maxAttempts)
 }
 
+var retryableCtx = func(ctx context.Context, fn func() error, maxAttempts int) error {
+	return retry.DoContext(ctx, fn, maxAttempts)
+}
+
 func truncateBody(body string) string {
 	return retry.TruncateBody(body)
+}
+
+func parseRetryAfter(value string) (time.Duration, bool) {
+	return retry.ParseRetryAfter(value)
 }

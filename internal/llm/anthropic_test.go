@@ -79,6 +79,7 @@ func TestAnthropicExtract_EmptyContent(t *testing.T) {
 }
 
 func TestAnthropicExtract_ServerError(t *testing.T) {
+	withImmediateRetries(t)
 	var callCount atomic.Int32
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -112,6 +113,7 @@ func TestAnthropicExtract_ServerError(t *testing.T) {
 }
 
 func TestAnthropicExtract_RateLimit(t *testing.T) {
+	withImmediateRetries(t)
 	var callCount atomic.Int32
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
