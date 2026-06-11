@@ -1,4 +1,4 @@
-package drive
+package googlemeet
 
 import (
 	"os"
@@ -124,5 +124,12 @@ func TestLoadOAuthConfig_InvalidPath(t *testing.T) {
 	_, err := loadOAuthConfig("/tmp/nonexistent-credentials-file.json")
 	if err == nil {
 		t.Fatal("expected error for nonexistent credentials file, got nil")
+	}
+}
+
+func TestSourceName(t *testing.T) {
+	s := &Source{}
+	if got := s.Name(); got != "googlemeet" {
+		t.Errorf("Name() = %q, want %q", got, "googlemeet")
 	}
 }

@@ -1,4 +1,4 @@
-package drive
+package googlemeet
 
 import (
 	"context"
@@ -8,32 +8,28 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jgavinray/omniscient/internal/models"
 	"golang.org/x/oauth2"
 	"google.golang.org/api/drive/v3"
 	"google.golang.org/api/option"
 )
 
-// Transcript represents a Google Drive document that has been downloaded
-// and exported as plain text.
-type Transcript struct {
-	ID         string
-	Name       string
-	ModifiedAt time.Time
-	Content    string
+// SourceName is the provider name used in dedup keys, config, and logs.
+const SourceName = "googlemeet"
+
+// Source provides authenticated access to Google Meet transcripts, which
+// Google Meet saves as Google Docs in a Drive folder.
+type Source struct {
+	service  *drive.Service
+	folderID string
 }
 
-// Client provides authenticated access to the Google Drive API.
-type Client struct {
-	service *drive.Service
-}
-
-// NewClient creates an authenticated Drive client. It loads the OAuth config
+// New creates an authenticated Google Meet source. It loads the OAuth config
 // from credentialsPath and the saved token from tokenPath, then constructs a
 // Drive service with an auto-refreshing token source.
 //
-// The token must already exist — run the `auth` command first to perform the
-// interactive browser consent flow.
-func NewClient(ctx context.Context, credentialsPath, tokenPath string) (*Client, error) {
+// The token must already exist — run `omniscient auth googlemeet` first.
+func New(ctx context.Context, credentialsPath, tokenPath, folderID string) (*Source, error) {
 	config, err := loadOAuthConfig(credentialsPath)
 	if err != nil {
 		return nil, fmt.Errorf("loading OAuth config: %w", err)
@@ -44,7 +40,7 @@ func NewClient(ctx context.Context, credentialsPath, tokenPath string) (*Client,
 		return nil, fmt.Errorf("loading token: %w", err)
 	}
 	if token == nil {
-		return nil, fmt.Errorf("no token found at %s — run the 'auth' command first to authorize", tokenPath)
+		return nil, fmt.Errorf("no token found at %s — run 'omniscient auth googlemeet' first to authorize", tokenPath)
 	}
 
 	tokenSource := getTokenSource(ctx, config, tokenPath, token)
@@ -55,34 +51,37 @@ func NewClient(ctx context.Context, credentialsPath, tokenPath string) (*Client,
 		return nil, fmt.Errorf("creating Drive service: %w", err)
 	}
 
-	slog.Info("Google Drive client initialized")
+	slog.Info("Google Meet source initialized")
 
-	return &Client{service: service}, nil
+	return &Source{service: service, folderID: folderID}, nil
 }
 
-// GetRecentTranscripts fetches transcript documents from folderID that have
-// been modified within the given duration. Each document is exported as
+// Name implements source.Source.
+func (s *Source) Name() string { return SourceName }
+
+// ListRecent fetches transcript documents from the configured folder that
+// were modified within the given duration. Each document is exported as
 // plain text. If a single file export fails, the error is logged and that
 // file is skipped — remaining files are still processed.
-func (c *Client) GetRecentTranscripts(ctx context.Context, folderID string, since time.Duration) ([]*Transcript, error) {
+func (s *Source) ListRecent(ctx context.Context, since time.Duration) ([]*models.Transcript, error) {
 	cutoff := time.Now().UTC().Add(-since)
 	cutoffStr := cutoff.Format(time.RFC3339)
 
 	query := fmt.Sprintf(
 		"mimeType='application/vnd.google-apps.document' and modifiedTime > '%s' and '%s' in parents and trashed = false",
-		cutoffStr, folderID,
+		cutoffStr, s.folderID,
 	)
 
 	slog.Info("querying Google Drive for recent transcripts",
-		"folder_id", folderID,
+		"folder_id", s.folderID,
 		"since", cutoffStr,
 	)
 
-	var transcripts []*Transcript
+	var transcripts []*models.Transcript
 	pageToken := ""
 
 	for {
-		call := c.service.Files.List().
+		call := s.service.Files.List().
 			Context(ctx).
 			Q(query).
 			Fields("nextPageToken, files(id, name, modifiedTime)").
@@ -110,7 +109,7 @@ func (c *Client) GetRecentTranscripts(ctx context.Context, folderID string, sinc
 				continue
 			}
 
-			content, err := c.exportFileAsText(ctx, file.Id)
+			content, err := s.exportFileAsText(ctx, file.Id)
 			if err != nil {
 				slog.Warn("failed to export file as text, skipping",
 					"file_id", file.Id,
@@ -120,9 +119,10 @@ func (c *Client) GetRecentTranscripts(ctx context.Context, folderID string, sinc
 				continue
 			}
 
-			transcripts = append(transcripts, &Transcript{
+			transcripts = append(transcripts, &models.Transcript{
 				ID:         file.Id,
-				Name:       file.Name,
+				Source:     SourceName,
+				Title:      file.Name,
 				ModifiedAt: modifiedAt,
 				Content:    content,
 			})
@@ -142,15 +142,15 @@ func (c *Client) GetRecentTranscripts(ctx context.Context, folderID string, sinc
 
 	slog.Info("completed transcript fetch",
 		"total", len(transcripts),
-		"folder_id", folderID,
+		"folder_id", s.folderID,
 	)
 
 	return transcripts, nil
 }
 
 // exportFileAsText exports a Google Docs file as plain text.
-func (c *Client) exportFileAsText(ctx context.Context, fileID string) (string, error) {
-	resp, err := c.service.Files.Export(fileID, "text/plain").Context(ctx).Download()
+func (s *Source) exportFileAsText(ctx context.Context, fileID string) (string, error) {
+	resp, err := s.service.Files.Export(fileID, "text/plain").Context(ctx).Download()
 	if err != nil {
 		return "", fmt.Errorf("exporting file %s as text/plain: %w", fileID, err)
 	}
