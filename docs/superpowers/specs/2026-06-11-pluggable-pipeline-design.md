@@ -1,7 +1,7 @@
 # Omniscient v2: Pluggable Transcript Pipeline — Design
 
 **Date:** 2026-06-11
-**Status:** Approved (initial scope: Google Meet + Confluence)
+**Status:** Implemented (initial scope: Google Meet + Confluence)
 
 ## Intent
 
