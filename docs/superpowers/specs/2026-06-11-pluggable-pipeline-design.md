@@ -160,7 +160,12 @@ nothing reprocesses. Schema version is tracked in a `schema_version` table.
 ## LLM Scope of Work (14B-class models)
 
 The pipeline must work with a local 14B model on an OpenAI-compatible
-endpoint (already supported in config). Two LLM responsibilities:
+endpoint (already supported in config) **or an Anthropic-compatible
+endpoint**: the `anthropic` provider gains `anthropic_base_url`
+(default `https://api.anthropic.com`), so local servers exposing the
+Anthropic Messages API work too. The `sk-ant-` API-key requirement applies
+only to the default endpoint; custom endpoints accept any (or no) key.
+Two LLM responsibilities:
 
 1. **Classify** — pick a meeting type. Constrained choice: the prompt lists
    the exact template keys; the response is validated against that list
