@@ -22,7 +22,7 @@ var (
 func main() {
 	rootCmd := &cobra.Command{
 		Use:   "omniscient",
-		Short: "Meeting transcript harvester: Google Drive → LLM extraction → Confluence",
+		Short: "Meeting transcript harvester: meeting platforms → LLM extraction → knowledge bases",
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
 			setupLogging(logLevel, "")
 		},

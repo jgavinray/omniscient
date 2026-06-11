@@ -28,12 +28,22 @@ func newConfigValidateCmd() *cobra.Command {
 				return fmt.Errorf("config validation failed: %w", err)
 			}
 
+			sources := ""
+			if cfg.Sources.GoogleMeet.IsEnabled() {
+				sources += "googlemeet "
+			}
+			destinations := ""
+			if cfg.Destinations.Confluence.IsEnabled() {
+				destinations += "confluence "
+			}
+
 			cmd.Printf("Configuration valid: %s\n", cfgFile)
-			cmd.Printf("  Provider:  %s\n", cfg.LLM.Provider)
-			cmd.Printf("  Model:     %s\n", cfg.LLM.Model)
-			cmd.Printf("  Space:     %s\n", cfg.Confluence.SpaceKey)
-			cmd.Printf("  Lookback:  %d hours\n", cfg.Sync.LookbackHours)
-			cmd.Printf("  Max/run:   %d\n", cfg.Sync.MaxPerRun)
+			cmd.Printf("  Sources:      %s\n", sources)
+			cmd.Printf("  Destinations: %s\n", destinations)
+			cmd.Printf("  Provider:     %s\n", cfg.LLM.Provider)
+			cmd.Printf("  Model:        %s\n", cfg.LLM.Model)
+			cmd.Printf("  Lookback:     %d hours\n", cfg.Sync.LookbackHours)
+			cmd.Printf("  Max/run:      %d\n", cfg.Sync.MaxPerRun)
 
 			return nil
 		},

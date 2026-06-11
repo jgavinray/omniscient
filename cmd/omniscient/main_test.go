@@ -12,14 +12,27 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/jgavinray/omniscient/internal/config"
-	"github.com/jgavinray/omniscient/internal/confluence"
 	"github.com/jgavinray/omniscient/internal/database"
-	"github.com/jgavinray/omniscient/internal/drive"
+	"github.com/jgavinray/omniscient/internal/destination/confluence"
 	"github.com/jgavinray/omniscient/internal/llm"
 	"github.com/jgavinray/omniscient/internal/models"
+	"github.com/jgavinray/omniscient/internal/pipeline"
 )
+
+// stubSource feeds fixed transcripts into the pipeline, standing in for a
+// real meeting platform.
+type stubSource struct {
+	transcripts []*models.Transcript
+}
+
+func (s *stubSource) Name() string { return "stub" }
+
+func (s *stubSource) ListRecent(ctx context.Context, since time.Duration) ([]*models.Transcript, error) {
+	return s.transcripts, nil
+}
 
 // sampleExtractionOutput is the raw YAML+markdown output the mock LLM returns.
 const sampleExtractionOutput = `---
@@ -123,89 +136,41 @@ func TestIntegration_FullPipeline(t *testing.T) {
 		t.Fatalf("create extractor: %v", err)
 	}
 
-	// --- Create Confluence client pointing at mock server ---
-	confClient := confluence.NewClient(confluenceServer.URL, "test@example.com", "test-token")
+	// --- Confluence destination pointing at mock server ---
+	publisher := confluence.NewPublisher(confluenceServer.URL, "test@example.com", "test-token", "ENG", "")
 
-	// --- Simulate transcripts from Drive ---
-	transcripts := []*drive.Transcript{
-		{ID: "doc-001", Name: "Team Standup.gdoc", Content: "Alice: I worked on the pipeline.\nBob: I'll write tests."},
-		{ID: "doc-002", Name: "Design Review.gdoc", Content: "Alice: Let's review the architecture.\nBob: Looks good."},
-	}
+	// --- Stub source simulating Google Meet transcripts ---
+	src := &stubSource{transcripts: []*models.Transcript{
+		{ID: "doc-001", Source: "stub", Title: "Team Standup.gdoc", Content: "Alice: I worked on the pipeline.\nBob: I'll write tests."},
+		{ID: "doc-002", Source: "stub", Title: "Design Review.gdoc", Content: "Alice: Let's review the architecture.\nBob: Looks good."},
+	}}
 
-	// --- Set up prompts config for template lookup ---
-	classifyPrompt := "Classify this meeting: {{TEMPLATE_KEYS}}\n{{TRANSCRIPT_PREVIEW}}"
-	templates := map[string]config.MeetingTemplate{
+	// --- Pipeline config ---
+	cfg := &config.Config{}
+	cfg.Sync.LookbackHours = 24
+	cfg.Sync.MaxPerRun = 50
+	cfg.LLM.MaxTranscriptChars = 100000
+	cfg.Prompts.ClassifyPrompt = "Classify this meeting: {{TEMPLATE_KEYS}}\n{{TRANSCRIPT_PREVIEW}}"
+	cfg.Prompts.Templates = map[string]config.MeetingTemplate{
 		"engineering": {
 			Description:      "Engineering meetings",
 			ExtractionPrompt: "Extract notes from this engineering transcript:\n{{TRANSCRIPT}}",
 		},
 	}
-	templateKeys := []string{"engineering"}
 
-	// --- Run the pipeline ---
-	spaceKey := "ENG"
-	parentPageID := ""
-	successCount := 0
-
-	for _, transcript := range transcripts {
-		processed, err := store.IsProcessed(ctx, transcript.ID)
-		if err != nil {
-			t.Errorf("check processed: %v", err)
-			continue
-		}
-		if processed {
-			continue
-		}
-
-		// Classify.
-		preview := transcript.Content
-		if len(preview) > 1000 {
-			preview = preview[:1000]
-		}
-		meetingType, err := extractor.Classify(ctx, preview, templateKeys, classifyPrompt)
-		if err != nil {
-			t.Errorf("classify failed for %s: %v", transcript.ID, err)
-			continue
-		}
-
-		tmpl, ok := templates[strings.TrimSpace(meetingType)]
-		if !ok {
-			tmpl = templates["engineering"]
-		}
-
-		// Extract.
-		rawOutput, err := extractor.Extract(ctx, transcript.Content, tmpl.ExtractionPrompt)
-		if err != nil {
-			t.Errorf("extraction failed for %s: %v", transcript.ID, err)
-			continue
-		}
-
-		// Parse.
-		result, err := models.ParseExtractionOutput(rawOutput)
-		if err != nil {
-			t.Errorf("parse failed for %s: %v", transcript.ID, err)
-			continue
-		}
-
-		// Publish.
-		confluenceURL, err := confClient.PublishMarkdown(ctx, spaceKey, parentPageID, result, transcript.Name)
-		if err != nil {
-			t.Errorf("publish failed for %s: %v", transcript.ID, err)
-			continue
-		}
-
-		if err := store.MarkProcessed(ctx, transcript.ID, transcript.Name, confluenceURL); err != nil {
-			t.Errorf("mark processed failed for %s: %v", transcript.ID, err)
-		}
-
-		successCount++
+	// --- Run the real pipeline ---
+	svc := pipeline.New(
+		[]pipeline.Source{src},
+		extractor,
+		[]pipeline.Destination{publisher},
+		store,
+		cfg,
+	)
+	if err := svc.Run(ctx); err != nil {
+		t.Fatalf("pipeline run failed: %v", err)
 	}
 
 	// --- Verify results ---
-	if successCount != 2 {
-		t.Errorf("expected 2 successes, got %d", successCount)
-	}
-
 	// 2 classify + 2 extract = 4 LLM calls
 	if llmCalls.Load() != 4 {
 		t.Errorf("expected 4 LLM calls (2 classify + 2 extract), got %d", llmCalls.Load())
@@ -216,28 +181,26 @@ func TestIntegration_FullPipeline(t *testing.T) {
 		t.Errorf("expected 4 confluence calls, got %d", confluenceCalls.Load())
 	}
 
-	// Verify both are now marked as processed.
-	for _, transcript := range transcripts {
-		processed, err := store.IsProcessed(ctx, transcript.ID)
+	// Verify both are now marked as processed under source-prefixed keys.
+	for _, transcript := range src.transcripts {
+		processed, err := store.IsProcessed(ctx, transcript.Key())
 		if err != nil {
 			t.Errorf("check processed after: %v", err)
 		}
 		if !processed {
-			t.Errorf("transcript %s should be processed", transcript.ID)
+			t.Errorf("transcript %s should be processed", transcript.Key())
 		}
 	}
 
-	// --- Run pipeline again — should skip both ---
-	secondRunSuccess := 0
-	for _, transcript := range transcripts {
-		processed, _ := store.IsProcessed(ctx, transcript.ID)
-		if !processed {
-			secondRunSuccess++
-		}
+	// --- Run pipeline again: dedup must skip both, no new external calls ---
+	llmCalls.Store(0)
+	confluenceCalls.Store(0)
+	if err := svc.Run(ctx); err != nil {
+		t.Fatalf("second pipeline run failed: %v", err)
 	}
-
-	if secondRunSuccess != 0 {
-		t.Errorf("expected 0 pending on second run, got %d", secondRunSuccess)
+	if llmCalls.Load() != 0 || confluenceCalls.Load() != 0 {
+		t.Errorf("second run should skip processed transcripts, got llm=%d confluence=%d calls",
+			llmCalls.Load(), confluenceCalls.Load())
 	}
 }
 
@@ -265,22 +228,24 @@ func TestConfigValidate_ExampleConfig(t *testing.T) {
 func tempYAML(t *testing.T, dbPath string) string {
 	t.Helper()
 	dir := t.TempDir()
-	content := fmt.Sprintf(`google:
-  credentials_file: /opt/omniscient/credentials.json
-  token_file: /opt/omniscient/token.json
-  folder_id: abc123folderID
+	content := fmt.Sprintf(`sources:
+  googlemeet:
+    credentials_file: /opt/omniscient/credentials.json
+    token_file: /opt/omniscient/token.json
+    folder_id: abc123folderID
 llm:
   provider: openai-compatible
   openai_base_url: http://localhost:11434/v1
   openai_api_key: test-key-123
   model: llama3:70b
   timeout: 90
-confluence:
-  base_url: https://mycompany.atlassian.net/wiki
-  email: user@example.com
-  api_token: confluence-token-xyz
-  space_key: ENG
-  parent_page_id: "12345"
+destinations:
+  confluence:
+    base_url: https://mycompany.atlassian.net/wiki
+    email: user@example.com
+    api_token: confluence-token-xyz
+    space_key: ENG
+    parent_page_id: "12345"
 sync:
   lookback_hours: 48
   database_path: %s
