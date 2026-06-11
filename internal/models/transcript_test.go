@@ -167,3 +167,10 @@ Complex meeting with nested data.`
 		t.Errorf("expected 2 tags, got %d", len(tags))
 	}
 }
+
+func TestTranscriptKey(t *testing.T) {
+	tr := &Transcript{ID: "abc123", Source: "googlemeet", Title: "Standup"}
+	if got, want := tr.Key(), "googlemeet:abc123"; got != want {
+		t.Errorf("Key() = %q, want %q", got, want)
+	}
+}

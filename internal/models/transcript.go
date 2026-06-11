@@ -3,9 +3,25 @@ package models
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
+
+// Transcript is a provider-neutral meeting transcript produced by a Source.
+type Transcript struct {
+	ID         string    // provider-native ID (e.g. Drive file ID)
+	Source     string    // source name, e.g. "googlemeet"
+	Title      string    // human-readable title (e.g. Drive file name)
+	ModifiedAt time.Time // last modification time at the provider
+	Content    string    // plain-text transcript content
+}
+
+// Key returns the globally unique dedup key, e.g. "googlemeet:abc123".
+// Source-prefixing prevents ID collisions between providers.
+func (t *Transcript) Key() string {
+	return t.Source + ":" + t.ID
+}
 
 // ExtractionResult holds the parsed output from the LLM extraction: YAML front-matter
 // and the markdown body.
