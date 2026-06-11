@@ -1,16 +1,57 @@
 # Omniscient
 
-Meeting transcript harvester: **Google Drive → LLM extraction → Confluence**.
+Meeting transcript harvester: **meeting platforms → LLM extraction → knowledge bases**.
 
-Omniscient is a CLI tool that runs as a cron job, fetching Google Meet transcripts from Drive, extracting structured meeting notes via LLM, and publishing them to Confluence pages. It uses SQLite to deduplicate across runs.
+Omniscient is a CLI tool that runs as a cron job, harvesting meeting
+transcripts from the platforms that already record them, extracting
+structured meeting notes via LLM, and publishing them to your knowledge base.
+It uses SQLite to deduplicate across runs.
 
-## How It Works
+It does **not** join or record calls — meeting platforms already do that.
+Google Meet (with transcription enabled) saves transcripts as Google Docs in
+Drive; Omniscient harvests them on a schedule.
 
-1. **Fetch** — Pulls recent transcripts from a Google Drive folder (filtered by modification time)
-2. **Classify** — LLM classifies each transcript by meeting type (engineering, customer success, planning, etc.)
-3. **Extract** — Runs a type-specific prompt to produce YAML front-matter + markdown notes
-4. **Publish** — Converts markdown to HTML and creates/updates a Confluence page
-5. **Track** — Marks the transcript as processed in SQLite so it's skipped on the next run
+## Providers
+
+| Type | Provider | Status |
+|------|----------|--------|
+| Source | Google Meet (via Drive) | ✅ implemented |
+| Source | Zoom | 🔜 planned — see [docs/ADDING_A_PROVIDER.md](docs/ADDING_A_PROVIDER.md) |
+| Destination | Confluence | ✅ implemented |
+| Destination | Notion | 🔜 planned — see [docs/ADDING_A_PROVIDER.md](docs/ADDING_A_PROVIDER.md) |
+
+Adding a provider means implementing one small interface in one package —
+the guide walks through it step by step.
+
+## Architecture
+
+```
+ sources (1..n)          pipeline                 destinations (1..n)
+┌──────────────┐   ┌──────────────────────┐   ┌──────────────────┐
+│ googlemeet   │──▶│ dedup → classify →   │──▶│ confluence       │
+│ (zoom …)     │   │ extract → validate → │   │ (notion …)       │
+└──────────────┘   │ publish → mark       │   └──────────────────┘
+                   └──────────────────────┘
+                        SQLite state + events
+```
+
+1. **Fetch** — every enabled source lists transcripts modified within the
+   lookback window
+2. **Classify** — the LLM picks a meeting type (engineering, customer
+   success, planning, …) from your configured templates; answers are
+   validated, retried once on garbage, and fall back safely
+3. **Extract** — a type-specific prompt produces YAML front-matter + markdown
+   notes; malformed output gets one corrective retry
+4. **Publish** — the notes go to every enabled destination (idempotent
+   create-or-update, so retries never duplicate pages)
+5. **Track** — the transcript is marked processed in SQLite under a
+   source-prefixed key (`googlemeet:<id>`) and skipped on later runs
+
+Works with the Anthropic API or **fully local LLMs** — any OpenAI-compatible
+(vLLM, Ollama, LM Studio) or Anthropic-compatible (llama.cpp) endpoint. The
+pipeline is hardened for 14B-class models: temperature 0, validated outputs,
+corrective retries. See [docs/LLM_SCOPE.md](docs/LLM_SCOPE.md) for what the
+LLM is responsible for and how to qualify a model.
 
 ## Installation
 
@@ -26,15 +67,16 @@ Requires Go 1.23+.
 
 ## Setup
 
-### 1. Google OAuth2 Credentials
+Follow the click-by-click guide in [docs/SETUP.md](docs/SETUP.md). The short
+version:
 
-1. Go to [Google Cloud Console](https://console.cloud.google.com/) → APIs & Services → Credentials
-2. Create an OAuth 2.0 Client ID (Desktop application)
-3. Download the JSON and save it as the `credentials_file` path in your config
-
-### 2. Configuration
-
-Copy the example config and fill in your values:
+1. **Google:** create an OAuth client (Desktop app) in Google Cloud Console,
+   save the JSON, then `omniscient auth googlemeet` — one browser click,
+   tokens auto-refresh forever
+2. **Confluence:** create an API token at id.atlassian.com, paste it into the
+   config
+3. **LLM:** point at Anthropic or your local model server
+4. Copy and fill the config:
 
 ```bash
 cp config.yaml.example /opt/omniscient/config.yaml
@@ -44,41 +86,31 @@ Key settings:
 
 | Section | Field | Description |
 |---------|-------|-------------|
-| `google` | `folder_id` | Google Drive folder containing transcripts |
+| `sources.googlemeet` | `folder_id` | Drive folder containing transcripts ("Meet Recordings") |
+| `destinations.confluence` | `base_url` | Your Atlassian URL (e.g., `https://company.atlassian.net`) |
+| `destinations.confluence` | `space_key` | Target Confluence space |
 | `llm` | `provider` | `anthropic` or `openai-compatible` |
 | `llm` | `model` | Model name (e.g., `claude-sonnet-4`, or a local model) |
-| `confluence` | `base_url` | Your Atlassian URL (e.g., `https://company.atlassian.net`) |
-| `confluence` | `space_key` | Target Confluence space |
 | `sync` | `database_path` | SQLite database for dedup tracking |
 
 See [`config.yaml.example`](config.yaml.example) for the full reference.
 
-### 3. Authenticate
-
-Run the auth command to complete the Google OAuth2 browser consent flow:
-
-```bash
-omniscient auth --config /opt/omniscient/config.yaml
-```
-
-This saves a `token.json` that auto-refreshes on subsequent runs.
-
-### 4. Validate
-
-```bash
-omniscient config validate --config /opt/omniscient/config.yaml
-```
-
 ## Usage
 
 ```bash
-# Run the sync pipeline
+# Validate config
+omniscient config validate --config /opt/omniscient/config.yaml
+
+# Authenticate with Google (once)
+omniscient auth googlemeet --config /opt/omniscient/config.yaml
+
+# Run the sync pipeline (set dry_run: true in config for a test run)
 omniscient sync --config /opt/omniscient/config.yaml
 
-# Dry run (extract and print, don't publish)
-# Set dry_run: true in config.yaml
-
-# Check version
+# Operations
+omniscient status         # pipeline counts + recent transcripts
+omniscient retry-failed   # re-queue everything marked failed
+omniscient forget <key>   # forget one transcript (googlemeet:<id>)
 omniscient version
 ```
 
@@ -88,16 +120,10 @@ omniscient version
 */30 * * * * /usr/local/bin/omniscient sync --config /opt/omniscient/config.yaml >> /var/log/omniscient/cron.log 2>&1
 ```
 
-## LLM Providers
-
-| Provider | Config | Notes |
-|----------|--------|-------|
-| **Anthropic** | `provider: anthropic` + `anthropic_api_key` | Claude models via Anthropic API |
-| **OpenAI-compatible** | `provider: openai-compatible` + `openai_base_url` | Works with vLLM, Ollama, OpenAI, or any compatible endpoint |
-
 ## Meeting Type Templates
 
-Omniscient classifies transcripts and applies type-specific extraction prompts. Default templates:
+Omniscient classifies transcripts and applies type-specific extraction
+prompts. Default templates:
 
 - **engineering** — Standups, design reviews, technical discussions
 - **customer_success** — Customer calls, account reviews
@@ -108,15 +134,25 @@ Custom templates can be defined in `config.yaml` under `prompts.templates`.
 ## Project Structure
 
 ```
-cmd/omniscient/          CLI commands (sync, auth, config, version)
+cmd/omniscient/                CLI commands (sync, auth, config, status, …)
 internal/
-  config/                YAML config loading + validation
-  drive/                 Google Drive API + OAuth2
-  llm/                   LLM extraction (Anthropic, OpenAI-compatible)
-  models/                Data types + YAML front-matter parser
-  database/              SQLite deduplication store
-  confluence/            Confluence REST API publisher
+  pipeline/                    Orchestration: dedup → classify → extract → publish
+  source/                      Source interface
+    googlemeet/                Google Meet source (Drive API + OAuth2)
+  destination/                 Destination interface
+    confluence/                Confluence REST API publisher
+  llm/                         LLM extraction (Anthropic + OpenAI-compatible)
+  config/                      YAML config loading + validation
+  models/                      Neutral Transcript type + front-matter parser
+  database/                    SQLite dedup store + sync events
+  retry/                       Transient-error retry with backoff
 ```
+
+## Documentation
+
+- [docs/SETUP.md](docs/SETUP.md) — click-by-click provider setup
+- [docs/ADDING_A_PROVIDER.md](docs/ADDING_A_PROVIDER.md) — add a source or destination
+- [docs/LLM_SCOPE.md](docs/LLM_SCOPE.md) — LLM responsibilities + model qualification
 
 ## Development
 

@@ -1,16 +1,17 @@
 # Omniscient Project Context
 
 ## What This Is
-Meeting transcript harvester: Google Drive → LLM extraction → Confluence
+Meeting transcript harvester: meeting platforms (Google Meet) → LLM extraction → knowledge bases (Confluence)
 
 ## Module
 `github.com/jgavinray/omniscient`
 
 ## Architecture
 - Cobra-based CLI tool (cron job, runs every 30min)
-- Google OAuth2 for Drive API (interactive browser consent on first run, token.json stored locally for refresh)
-- Multi-provider LLM support (Anthropic + OpenAI-compatible)
-- SQLite deduplication (`modernc.org/sqlite`, pure Go, no CGO)
+- **Pluggable providers**: `internal/source` (meeting platforms) + `internal/destination` (knowledge bases) interfaces, orchestrated by `internal/pipeline` — see `docs/ADDING_A_PROVIDER.md`
+- Google OAuth2 for the Google Meet source (interactive browser consent via `omniscient auth googlemeet`, token auto-refreshes)
+- Multi-provider LLM support (Anthropic + OpenAI-compatible, incl. local servers via `anthropic_base_url`/`openai_base_url`); temperature pinned to 0, outputs validated with one corrective retry — see `docs/LLM_SCOPE.md`
+- SQLite deduplication (`modernc.org/sqlite`, pure Go, no CGO); dedup keys are source-prefixed (`googlemeet:<id>`), schema versioned in `schema_version` table
 - Go 1.23+, clean interfaces
 
 > **Note:** `docs/IMPLEMENTATION_SPEC.md` references service account auth — OAuth2 is the correct approach.
@@ -30,10 +31,11 @@ omniscient sync
 ```
 
 ## Key Patterns
-- **Cobra CLI**: Commands in `cmd/omniscient/` (sync, version, config validate, auth)
-- **Interface-based LLM providers**: `internal/llm/extractor.go`
+- **Cobra CLI**: Commands in `cmd/omniscient/` (sync, version, config validate, auth <provider>, status, retry-failed, forget)
+- **Provider interfaces**: `internal/source/source.go` (Source), `internal/destination/destination.go` (Destination — must be idempotent), `internal/llm/extractor.go` (Extractor)
+- **Pipeline orchestration**: `internal/pipeline/pipeline.go` — multi-source fetch, dedup, classify/extract with validation + retry-with-feedback, multi-destination publish (all must succeed before mark-processed)
 - **Google OAuth2**: `credentials.json` (OAuth client from Google Cloud Console) + `token.json` (auto-generated on first run via browser consent, auto-refreshes)
-- **Config via YAML only**: `/opt/omniscient/config.yaml` — no environment variable overrides
+- **Config via YAML only**: `/opt/omniscient/config.yaml` — `sources:`/`destinations:` maps with per-provider `enabled:`; no environment variable overrides
 - **Structured logging**: `slog` throughout
 - **Retry transient errors**: 429, 5xx with exponential backoff (3 attempts)
 
