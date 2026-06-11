@@ -292,6 +292,34 @@ func (c *Client) doRequest(ctx context.Context, method, urlPath string, body int
 	return result, nil
 }
 
+// Publisher adapts Client to the destination.Destination interface, carrying
+// the Confluence-specific target (space key, parent page) so those concepts
+// stay out of the pipeline.
+type Publisher struct {
+	client       *Client
+	spaceKey     string
+	parentPageID string
+}
+
+// NewPublisher creates a Destination that publishes to the given Confluence
+// space, optionally nesting pages under parentPageID.
+func NewPublisher(baseURL, email, apiToken, spaceKey, parentPageID string) *Publisher {
+	return &Publisher{
+		client:       NewClient(baseURL, email, apiToken),
+		spaceKey:     spaceKey,
+		parentPageID: parentPageID,
+	}
+}
+
+// Name implements destination.Destination.
+func (p *Publisher) Name() string { return "confluence" }
+
+// Publish implements destination.Destination. It is idempotent: PublishMarkdown
+// updates an existing page with the same title instead of creating a duplicate.
+func (p *Publisher) Publish(ctx context.Context, result *models.ExtractionResult, t *models.Transcript) (string, error) {
+	return p.client.PublishMarkdown(ctx, p.spaceKey, p.parentPageID, result, t.Title)
+}
+
 // pageResult represents a Confluence page in API responses.
 type pageResult struct {
 	ID      string `json:"id"`

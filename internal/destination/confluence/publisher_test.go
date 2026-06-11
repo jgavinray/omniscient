@@ -422,3 +422,10 @@ func TestPublishMarkdown_RateLimit_Retry(t *testing.T) {
 		t.Errorf("expected URL %s, got %s", expectedURL, pageURL)
 	}
 }
+
+func TestPublisherImplementsDestination(t *testing.T) {
+	p := NewPublisher("https://example.atlassian.net", "a@b.c", "tok", "ENG", "")
+	if got := p.Name(); got != "confluence" {
+		t.Errorf("Name() = %q, want %q", got, "confluence")
+	}
+}
