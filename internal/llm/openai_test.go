@@ -188,3 +188,23 @@ func TestOpenAIClassify_ReturnsRawKey(t *testing.T) {
 		t.Errorf("expected %q, got %q", "engineering", result)
 	}
 }
+
+func TestOpenAITemperatureZero(t *testing.T) {
+	var got map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"choices":[{"message":{"content":"engineering"}}]}`)
+	}))
+	defer server.Close()
+
+	e := NewOpenAIExtractor(server.URL, "key", "model", 5*time.Second)
+	if _, err := e.Classify(context.Background(), "preview", []string{"engineering"}, "{{TEMPLATE_KEYS}} {{TRANSCRIPT_PREVIEW}}"); err != nil {
+		t.Fatal(err)
+	}
+
+	temp, ok := got["temperature"].(float64)
+	if !ok || temp != 0 {
+		t.Errorf("temperature = %v, want 0", got["temperature"])
+	}
+}

@@ -67,7 +67,7 @@ func (e *OpenAIExtractor) callAPI(ctx context.Context, prompt string, maxTokens 
 		Messages: []openaiMessage{
 			{Role: "user", Content: prompt},
 		},
-		Temperature: 0.1,
+		Temperature: 0,
 		MaxTokens:   maxTokens,
 	}
 

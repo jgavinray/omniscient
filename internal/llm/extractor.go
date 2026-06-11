@@ -20,7 +20,7 @@ type Extractor interface {
 func NewExtractor(cfg *config.LLMConfig) (Extractor, error) {
 	switch cfg.Provider {
 	case "anthropic":
-		return NewAnthropicExtractor(cfg.AnthropicAPIKey, cfg.Model, time.Duration(cfg.Timeout)*time.Second), nil
+		return NewAnthropicExtractor(cfg.AnthropicBaseURL, cfg.AnthropicAPIKey, cfg.Model, time.Duration(cfg.Timeout)*time.Second), nil
 	case "openai-compatible":
 		return NewOpenAIExtractor(cfg.OpenAIBaseURL, cfg.OpenAIAPIKey, cfg.Model, time.Duration(cfg.Timeout)*time.Second), nil
 	default:

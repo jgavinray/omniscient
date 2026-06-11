@@ -19,9 +19,13 @@ type AnthropicExtractor struct {
 	baseURL    string // default "https://api.anthropic.com" — allow override for testing
 }
 
-// NewAnthropicExtractor creates an AnthropicExtractor configured with the given
-// API key, model name, and HTTP timeout duration.
-func NewAnthropicExtractor(apiKey, model string, timeout time.Duration) *AnthropicExtractor {
+// NewAnthropicExtractor creates an AnthropicExtractor. baseURL may point at
+// any Anthropic-compatible Messages API server (llama.cpp, LM Studio, a
+// proxy); empty means the official https://api.anthropic.com.
+func NewAnthropicExtractor(baseURL, apiKey, model string, timeout time.Duration) *AnthropicExtractor {
+	if baseURL == "" {
+		baseURL = "https://api.anthropic.com"
+	}
 	return &AnthropicExtractor{
 		apiKey: apiKey,
 		model:  model,
@@ -31,15 +35,16 @@ func NewAnthropicExtractor(apiKey, model string, timeout time.Duration) *Anthrop
 				return fmt.Errorf("unexpected redirect to %s", req.URL)
 			},
 		},
-		baseURL: "https://api.anthropic.com",
+		baseURL: strings.TrimRight(baseURL, "/"),
 	}
 }
 
 // anthropicRequest is the request body for the Anthropic Messages API.
 type anthropicRequest struct {
-	Model     string             `json:"model"`
-	MaxTokens int                `json:"max_tokens"`
-	Messages  []anthropicMessage `json:"messages"`
+	Model       string             `json:"model"`
+	MaxTokens   int                `json:"max_tokens"`
+	Temperature float64            `json:"temperature"`
+	Messages    []anthropicMessage `json:"messages"`
 }
 
 // anthropicMessage represents a single message in the Anthropic conversation.
@@ -60,6 +65,9 @@ func (e *AnthropicExtractor) callAPI(ctx context.Context, prompt string, maxToke
 	reqBody := anthropicRequest{
 		Model:     e.model,
 		MaxTokens: maxTokens,
+		// Deterministic structure beats creative prose for extraction, and
+		// small local models drift badly at higher temperatures.
+		Temperature: 0,
 		Messages: []anthropicMessage{
 			{Role: "user", Content: prompt},
 		},
@@ -78,7 +86,10 @@ func (e *AnthropicExtractor) callAPI(ctx context.Context, prompt string, maxToke
 			return fmt.Errorf("creating anthropic request: %w", err)
 		}
 
-		req.Header.Set("x-api-key", e.apiKey)
+		// Local Anthropic-compatible servers don't require a key.
+		if e.apiKey != "" {
+			req.Header.Set("x-api-key", e.apiKey)
+		}
 		req.Header.Set("anthropic-version", "2023-06-01")
 		req.Header.Set("Content-Type", "application/json")
 

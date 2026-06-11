@@ -56,10 +56,13 @@ type DestinationsConfig struct {
 type LLMConfig struct {
 	Provider        string `yaml:"provider"`
 	AnthropicAPIKey string `yaml:"anthropic_api_key"`
-	OpenAIBaseURL   string `yaml:"openai_base_url"`
-	OpenAIAPIKey    string `yaml:"openai_api_key"`
-	Model           string `yaml:"model"`
-	Timeout         int    `yaml:"timeout"`
+	// AnthropicBaseURL points at any Anthropic-compatible Messages API
+	// endpoint (llama.cpp, LM Studio, a proxy); empty = api.anthropic.com.
+	AnthropicBaseURL string `yaml:"anthropic_base_url"`
+	OpenAIBaseURL    string `yaml:"openai_base_url"`
+	OpenAIAPIKey     string `yaml:"openai_api_key"`
+	Model            string `yaml:"model"`
+	Timeout          int    `yaml:"timeout"`
 	// MaxTranscriptChars triggers a warning (not a failure) for transcripts
 	// longer than this; very long inputs degrade small-model output quality.
 	MaxTranscriptChars int `yaml:"max_transcript_chars"`
@@ -264,11 +267,22 @@ func (c *Config) validate() error {
 	// LLM config validation.
 	switch c.LLM.Provider {
 	case "anthropic":
-		if c.LLM.AnthropicAPIKey == "" {
-			return fmt.Errorf("llm.anthropic_api_key is required when provider is anthropic")
+		// Empty base URL means the official endpoint (applyDefaults fills it in).
+		anthropicBase := c.LLM.AnthropicBaseURL
+		if anthropicBase != "" {
+			if err := validateURL("llm.anthropic_base_url", anthropicBase, []string{"http", "https"}); err != nil {
+				return err
+			}
 		}
-		if !strings.HasPrefix(c.LLM.AnthropicAPIKey, "sk-ant-") {
-			return fmt.Errorf("llm.anthropic_api_key must start with \"sk-ant-\"")
+		// Only the official endpoint requires a real Anthropic key; local
+		// Anthropic-compatible servers accept any or no key.
+		if anthropicBase == "" || anthropicBase == "https://api.anthropic.com" {
+			if c.LLM.AnthropicAPIKey == "" {
+				return fmt.Errorf("llm.anthropic_api_key is required when provider is anthropic")
+			}
+			if !strings.HasPrefix(c.LLM.AnthropicAPIKey, "sk-ant-") {
+				return fmt.Errorf("llm.anthropic_api_key must start with \"sk-ant-\"")
+			}
 		}
 	case "openai-compatible":
 		if c.LLM.OpenAIBaseURL == "" {

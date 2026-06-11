@@ -737,3 +737,18 @@ func TestApplyDefaults_MaxTranscriptChars(t *testing.T) {
 		t.Errorf("MaxTranscriptChars = %d, want 100000", cfg.LLM.MaxTranscriptChars)
 	}
 }
+
+func TestValidate_AnthropicKeyOptionalForCustomBaseURL(t *testing.T) {
+	cfg := baseValidConfig()
+	cfg.LLM.Provider = "anthropic"
+	cfg.LLM.AnthropicBaseURL = "http://localhost:8080"
+	cfg.LLM.AnthropicAPIKey = "" // local servers don't need a real key
+	if err := cfg.validate(); err != nil {
+		t.Errorf("validate() = %v, want nil for custom anthropic base URL", err)
+	}
+
+	cfg.LLM.AnthropicBaseURL = "https://api.anthropic.com"
+	if err := cfg.validate(); err == nil {
+		t.Error("validate() = nil, want missing-key error for default endpoint")
+	}
+}

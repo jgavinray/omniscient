@@ -45,8 +45,7 @@ func TestAnthropicExtract_Success(t *testing.T) {
 	}))
 	defer server.Close()
 
-	e := NewAnthropicExtractor("sk-ant-test-key", "claude-sonnet-4-20250514", 10*time.Second)
-	e.baseURL = server.URL
+	e := NewAnthropicExtractor(server.URL, "sk-ant-test-key", "claude-sonnet-4-20250514", 10*time.Second)
 
 	result, err := e.Extract(context.Background(), "Alice: Sprint looks good.\nBob: Agreed.", "Extract: {{TRANSCRIPT}}")
 	if err != nil {
@@ -69,8 +68,7 @@ func TestAnthropicExtract_EmptyContent(t *testing.T) {
 	}))
 	defer server.Close()
 
-	e := NewAnthropicExtractor("sk-ant-test-key", "claude-sonnet-4-20250514", 10*time.Second)
-	e.baseURL = server.URL
+	e := NewAnthropicExtractor(server.URL, "sk-ant-test-key", "claude-sonnet-4-20250514", 10*time.Second)
 
 	_, err := e.Extract(context.Background(), "some transcript", "Extract: {{TRANSCRIPT}}")
 	if err == nil {
@@ -94,8 +92,7 @@ func TestAnthropicExtract_ServerError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	e := NewAnthropicExtractor("sk-ant-test-key", "claude-sonnet-4-20250514", 10*time.Second)
-	e.baseURL = server.URL
+	e := NewAnthropicExtractor(server.URL, "sk-ant-test-key", "claude-sonnet-4-20250514", 10*time.Second)
 
 	result, err := e.Extract(context.Background(), "some transcript", "Extract: {{TRANSCRIPT}}")
 	if err != nil {
@@ -128,8 +125,7 @@ func TestAnthropicExtract_RateLimit(t *testing.T) {
 	}))
 	defer server.Close()
 
-	e := NewAnthropicExtractor("sk-ant-test-key", "claude-sonnet-4-20250514", 10*time.Second)
-	e.baseURL = server.URL
+	e := NewAnthropicExtractor(server.URL, "sk-ant-test-key", "claude-sonnet-4-20250514", 10*time.Second)
 
 	result, err := e.Extract(context.Background(), "some transcript", "Extract: {{TRANSCRIPT}}")
 	if err != nil {
@@ -156,8 +152,7 @@ func TestAnthropicExtract_PermanentError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	e := NewAnthropicExtractor("sk-ant-test-key", "claude-sonnet-4-20250514", 10*time.Second)
-	e.baseURL = server.URL
+	e := NewAnthropicExtractor(server.URL, "sk-ant-test-key", "claude-sonnet-4-20250514", 10*time.Second)
 
 	_, err := e.Extract(context.Background(), "some transcript", "Extract: {{TRANSCRIPT}}")
 	if err == nil {
@@ -177,8 +172,7 @@ func TestAnthropicClassify_Success(t *testing.T) {
 	}))
 	defer server.Close()
 
-	e := NewAnthropicExtractor("sk-ant-test-key", "claude-sonnet-4-20250514", 10*time.Second)
-	e.baseURL = server.URL
+	e := NewAnthropicExtractor(server.URL, "sk-ant-test-key", "claude-sonnet-4-20250514", 10*time.Second)
 
 	result, err := e.Classify(context.Background(), "Alice: Sprint looks good.", []string{"engineering", "planning"}, "Classify: {{TEMPLATE_KEYS}}\n{{TRANSCRIPT_PREVIEW}}")
 	if err != nil {
@@ -198,8 +192,7 @@ func TestAnthropicClassify_ReturnsRawKey(t *testing.T) {
 	}))
 	defer server.Close()
 
-	e := NewAnthropicExtractor("sk-ant-test-key", "claude-sonnet-4-20250514", 10*time.Second)
-	e.baseURL = server.URL
+	e := NewAnthropicExtractor(server.URL, "sk-ant-test-key", "claude-sonnet-4-20250514", 10*time.Second)
 
 	result, err := e.Classify(context.Background(), "preview text", []string{"engineering", "customer_success"}, "Classify: {{TEMPLATE_KEYS}}\n{{TRANSCRIPT_PREVIEW}}")
 	if err != nil {
@@ -208,5 +201,36 @@ func TestAnthropicClassify_ReturnsRawKey(t *testing.T) {
 
 	if result != "customer_success" {
 		t.Errorf("expected %q, got %q", "customer_success", result)
+	}
+}
+
+func TestAnthropicTemperatureZero(t *testing.T) {
+	var got map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"content":[{"text":"engineering"}]}`)
+	}))
+	defer server.Close()
+
+	e := NewAnthropicExtractor(server.URL, "sk-ant-test-key", "claude-sonnet-4-20250514", 5*time.Second)
+	if _, err := e.Classify(context.Background(), "preview", []string{"engineering"}, "{{TEMPLATE_KEYS}} {{TRANSCRIPT_PREVIEW}}"); err != nil {
+		t.Fatal(err)
+	}
+
+	temp, ok := got["temperature"].(float64)
+	if !ok || temp != 0 {
+		t.Errorf("temperature = %v, want 0", got["temperature"])
+	}
+}
+
+func TestNewAnthropicExtractorBaseURL(t *testing.T) {
+	e := NewAnthropicExtractor("http://localhost:8080/", "", "local-model", 5*time.Second)
+	if e.baseURL != "http://localhost:8080" {
+		t.Errorf("baseURL = %q, want custom URL without trailing slash", e.baseURL)
+	}
+	e = NewAnthropicExtractor("", "sk-ant-x", "claude-sonnet-4", 5*time.Second)
+	if e.baseURL != "https://api.anthropic.com" {
+		t.Errorf("baseURL = %q, want default", e.baseURL)
 	}
 }
