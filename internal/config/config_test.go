@@ -9,22 +9,24 @@ import (
 
 // validOpenAICompatibleYAML returns a valid config YAML string using the openai-compatible provider.
 func validOpenAICompatibleYAML() string {
-	return `google:
-  credentials_file: /opt/omniscient/credentials.json
-  token_file: /opt/omniscient/token.json
-  folder_id: abc123folderID
+	return `sources:
+  googlemeet:
+    credentials_file: /opt/omniscient/credentials.json
+    token_file: /opt/omniscient/token.json
+    folder_id: abc123folderID
 llm:
   provider: openai-compatible
   openai_base_url: http://localhost:11434/v1
   openai_api_key: test-key-123
   model: llama3:70b
   timeout: 90
-confluence:
-  base_url: https://mycompany.atlassian.net/wiki
-  email: user@example.com
-  api_token: confluence-token-xyz
-  space_key: ENG
-  parent_page_id: "12345"
+destinations:
+  confluence:
+    base_url: https://mycompany.atlassian.net/wiki
+    email: user@example.com
+    api_token: confluence-token-xyz
+    space_key: ENG
+    parent_page_id: "12345"
 sync:
   lookback_hours: 48
   database_path: /opt/omniscient/data.db
@@ -37,21 +39,23 @@ logging:
 
 // validAnthropicYAML returns a valid config YAML string using the anthropic provider.
 func validAnthropicYAML() string {
-	return `google:
-  credentials_file: /opt/omniscient/credentials.json
-  token_file: /opt/omniscient/token.json
-  folder_id: folder-xyz-789
+	return `sources:
+  googlemeet:
+    credentials_file: /opt/omniscient/credentials.json
+    token_file: /opt/omniscient/token.json
+    folder_id: folder-xyz-789
 llm:
   provider: anthropic
   anthropic_api_key: sk-ant-api03-testkey123
   model: claude-sonnet-4-20250514
   timeout: 180
-confluence:
-  base_url: https://wiki.example.com
-  email: admin@example.com
-  api_token: conf-token-abc
-  space_key: MEETINGS
-  parent_page_id: "99999"
+destinations:
+  confluence:
+    base_url: https://wiki.example.com
+    email: admin@example.com
+    api_token: conf-token-abc
+    space_key: MEETINGS
+    parent_page_id: "99999"
 sync:
   lookback_hours: 12
   database_path: /tmp/omniscient-test.db
@@ -65,10 +69,12 @@ logging:
 // Tests can mutate individual fields to trigger specific validation errors.
 func baseValidConfig() Config {
 	return Config{
-		Google: GoogleConfig{
-			CredentialsFile: "/opt/omniscient/credentials.json",
-			TokenFile:       "/opt/omniscient/token.json",
-			FolderID:        "1aBcDeFgHiJkLmN",
+		Sources: SourcesConfig{
+			GoogleMeet: GoogleMeetConfig{
+				CredentialsFile: "/opt/omniscient/credentials.json",
+				TokenFile:       "/opt/omniscient/token.json",
+				FolderID:        "1aBcDeFgHiJkLmN",
+			},
 		},
 		LLM: LLMConfig{
 			Provider:      "openai-compatible",
@@ -76,12 +82,14 @@ func baseValidConfig() Config {
 			Model:         "llama3:70b",
 			Timeout:       90,
 		},
-		Confluence: ConfluenceConfig{
-			BaseURL:      "https://mycompany.atlassian.net/wiki",
-			Email:        "user@example.com",
-			APIToken:     "token-abc",
-			SpaceKey:     "ENG",
-			ParentPageID: "12345",
+		Destinations: DestinationsConfig{
+			Confluence: ConfluenceConfig{
+				BaseURL:      "https://mycompany.atlassian.net/wiki",
+				Email:        "user@example.com",
+				APIToken:     "token-abc",
+				SpaceKey:     "ENG",
+				ParentPageID: "12345",
+			},
 		},
 		Sync: SyncConfig{
 			LookbackHours: 24,
@@ -124,14 +132,14 @@ func TestLoad_ValidConfig(t *testing.T) {
 	}
 
 	// Google fields.
-	if cfg.Google.CredentialsFile != "/opt/omniscient/credentials.json" {
-		t.Errorf("Google.CredentialsFile = %q, want %q", cfg.Google.CredentialsFile, "/opt/omniscient/credentials.json")
+	if cfg.Sources.GoogleMeet.CredentialsFile != "/opt/omniscient/credentials.json" {
+		t.Errorf("Google.CredentialsFile = %q, want %q", cfg.Sources.GoogleMeet.CredentialsFile, "/opt/omniscient/credentials.json")
 	}
-	if cfg.Google.TokenFile != "/opt/omniscient/token.json" {
-		t.Errorf("Google.TokenFile = %q, want %q", cfg.Google.TokenFile, "/opt/omniscient/token.json")
+	if cfg.Sources.GoogleMeet.TokenFile != "/opt/omniscient/token.json" {
+		t.Errorf("Google.TokenFile = %q, want %q", cfg.Sources.GoogleMeet.TokenFile, "/opt/omniscient/token.json")
 	}
-	if cfg.Google.FolderID != "abc123folderID" {
-		t.Errorf("Google.FolderID = %q, want %q", cfg.Google.FolderID, "abc123folderID")
+	if cfg.Sources.GoogleMeet.FolderID != "abc123folderID" {
+		t.Errorf("Google.FolderID = %q, want %q", cfg.Sources.GoogleMeet.FolderID, "abc123folderID")
 	}
 
 	// LLM fields.
@@ -152,20 +160,20 @@ func TestLoad_ValidConfig(t *testing.T) {
 	}
 
 	// Confluence fields.
-	if cfg.Confluence.BaseURL != "https://mycompany.atlassian.net/wiki" {
-		t.Errorf("Confluence.BaseURL = %q, want %q", cfg.Confluence.BaseURL, "https://mycompany.atlassian.net/wiki")
+	if cfg.Destinations.Confluence.BaseURL != "https://mycompany.atlassian.net/wiki" {
+		t.Errorf("Confluence.BaseURL = %q, want %q", cfg.Destinations.Confluence.BaseURL, "https://mycompany.atlassian.net/wiki")
 	}
-	if cfg.Confluence.Email != "user@example.com" {
-		t.Errorf("Confluence.Email = %q, want %q", cfg.Confluence.Email, "user@example.com")
+	if cfg.Destinations.Confluence.Email != "user@example.com" {
+		t.Errorf("Confluence.Email = %q, want %q", cfg.Destinations.Confluence.Email, "user@example.com")
 	}
-	if cfg.Confluence.APIToken != "confluence-token-xyz" {
-		t.Errorf("Confluence.APIToken = %q, want %q", cfg.Confluence.APIToken, "confluence-token-xyz")
+	if cfg.Destinations.Confluence.APIToken != "confluence-token-xyz" {
+		t.Errorf("Confluence.APIToken = %q, want %q", cfg.Destinations.Confluence.APIToken, "confluence-token-xyz")
 	}
-	if cfg.Confluence.SpaceKey != "ENG" {
-		t.Errorf("Confluence.SpaceKey = %q, want %q", cfg.Confluence.SpaceKey, "ENG")
+	if cfg.Destinations.Confluence.SpaceKey != "ENG" {
+		t.Errorf("Confluence.SpaceKey = %q, want %q", cfg.Destinations.Confluence.SpaceKey, "ENG")
 	}
-	if cfg.Confluence.ParentPageID != "12345" {
-		t.Errorf("Confluence.ParentPageID = %q, want %q", cfg.Confluence.ParentPageID, "12345")
+	if cfg.Destinations.Confluence.ParentPageID != "12345" {
+		t.Errorf("Confluence.ParentPageID = %q, want %q", cfg.Destinations.Confluence.ParentPageID, "12345")
 	}
 
 	// Sync fields.
@@ -209,11 +217,11 @@ func TestLoad_ValidAnthropicConfig(t *testing.T) {
 	if cfg.LLM.Timeout != 180 {
 		t.Errorf("LLM.Timeout = %d, want %d", cfg.LLM.Timeout, 180)
 	}
-	if cfg.Google.FolderID != "folder-xyz-789" {
-		t.Errorf("Google.FolderID = %q, want %q", cfg.Google.FolderID, "folder-xyz-789")
+	if cfg.Sources.GoogleMeet.FolderID != "folder-xyz-789" {
+		t.Errorf("Google.FolderID = %q, want %q", cfg.Sources.GoogleMeet.FolderID, "folder-xyz-789")
 	}
-	if cfg.Confluence.SpaceKey != "MEETINGS" {
-		t.Errorf("Confluence.SpaceKey = %q, want %q", cfg.Confluence.SpaceKey, "MEETINGS")
+	if cfg.Destinations.Confluence.SpaceKey != "MEETINGS" {
+		t.Errorf("Confluence.SpaceKey = %q, want %q", cfg.Destinations.Confluence.SpaceKey, "MEETINGS")
 	}
 	if cfg.Sync.LookbackHours != 12 {
 		t.Errorf("Sync.LookbackHours = %d, want %d", cfg.Sync.LookbackHours, 12)
@@ -251,27 +259,27 @@ func TestLoad_InvalidYAML(t *testing.T) {
 
 func TestValidate_MissingCredentialsFile(t *testing.T) {
 	cfg := baseValidConfig()
-	cfg.Google.CredentialsFile = ""
+	cfg.Sources.GoogleMeet.CredentialsFile = ""
 
 	err := cfg.validate()
 	if err == nil {
 		t.Fatal("validate() expected error for empty credentials_file, got nil")
 	}
-	if !strings.Contains(err.Error(), "google.credentials_file") {
-		t.Errorf("error = %q, want it to mention %q", err.Error(), "google.credentials_file")
+	if !strings.Contains(err.Error(), "sources.googlemeet.credentials_file") {
+		t.Errorf("error = %q, want it to mention %q", err.Error(), "sources.googlemeet.credentials_file")
 	}
 }
 
 func TestValidate_MissingFolderID(t *testing.T) {
 	cfg := baseValidConfig()
-	cfg.Google.FolderID = ""
+	cfg.Sources.GoogleMeet.FolderID = ""
 
 	err := cfg.validate()
 	if err == nil {
 		t.Fatal("validate() expected error for empty folder_id, got nil")
 	}
-	if !strings.Contains(err.Error(), "google.folder_id") {
-		t.Errorf("error = %q, want it to mention %q", err.Error(), "google.folder_id")
+	if !strings.Contains(err.Error(), "sources.googlemeet.folder_id") {
+		t.Errorf("error = %q, want it to mention %q", err.Error(), "sources.googlemeet.folder_id")
 	}
 }
 
@@ -355,30 +363,30 @@ func TestValidate_MissingConfluenceFields(t *testing.T) {
 		{
 			name: "missing base_url",
 			mutate: func(c *Config) {
-				c.Confluence.BaseURL = ""
+				c.Destinations.Confluence.BaseURL = ""
 			},
-			wantErr: "confluence.base_url",
+			wantErr: "destinations.confluence.base_url",
 		},
 		{
 			name: "missing email",
 			mutate: func(c *Config) {
-				c.Confluence.Email = ""
+				c.Destinations.Confluence.Email = ""
 			},
-			wantErr: "confluence.email",
+			wantErr: "destinations.confluence.email",
 		},
 		{
 			name: "missing api_token",
 			mutate: func(c *Config) {
-				c.Confluence.APIToken = ""
+				c.Destinations.Confluence.APIToken = ""
 			},
-			wantErr: "confluence.api_token",
+			wantErr: "destinations.confluence.api_token",
 		},
 		{
 			name: "missing space_key",
 			mutate: func(c *Config) {
-				c.Confluence.SpaceKey = ""
+				c.Destinations.Confluence.SpaceKey = ""
 			},
-			wantErr: "confluence.space_key",
+			wantErr: "destinations.confluence.space_key",
 		},
 	}
 
@@ -444,12 +452,13 @@ func TestValidate_DryRunParsed(t *testing.T) {
 func TestValidate_ConfluenceDisabledSkipsValidation(t *testing.T) {
 	cfg := baseValidConfig()
 	f := false
-	cfg.Confluence.Enabled = &f
+	cfg.Destinations.Confluence.Enabled = &f
+	cfg.DryRun = true // zero destinations is only valid in dry-run mode
 	// Clear required confluence fields — should not trigger validation error.
-	cfg.Confluence.BaseURL = ""
-	cfg.Confluence.Email = ""
-	cfg.Confluence.APIToken = ""
-	cfg.Confluence.SpaceKey = ""
+	cfg.Destinations.Confluence.BaseURL = ""
+	cfg.Destinations.Confluence.Email = ""
+	cfg.Destinations.Confluence.APIToken = ""
+	cfg.Destinations.Confluence.SpaceKey = ""
 
 	err := cfg.validate()
 	if err != nil {
@@ -459,7 +468,7 @@ func TestValidate_ConfluenceDisabledSkipsValidation(t *testing.T) {
 
 func TestValidate_ConfluencePathAcceptsEmpty(t *testing.T) {
 	cfg := baseValidConfig()
-	cfg.Confluence.BaseURL = "https://mycompany.atlassian.net"
+	cfg.Destinations.Confluence.BaseURL = "https://mycompany.atlassian.net"
 	err := cfg.validate()
 	if err != nil {
 		t.Fatalf("validate() expected no error for base_url with no path, got: %v", err)
@@ -468,7 +477,7 @@ func TestValidate_ConfluencePathAcceptsEmpty(t *testing.T) {
 
 func TestValidate_ConfluencePathAcceptsWiki(t *testing.T) {
 	cfg := baseValidConfig()
-	cfg.Confluence.BaseURL = "https://mycompany.atlassian.net/wiki"
+	cfg.Destinations.Confluence.BaseURL = "https://mycompany.atlassian.net/wiki"
 	err := cfg.validate()
 	if err != nil {
 		t.Fatalf("validate() expected no error for base_url with /wiki path, got: %v", err)
@@ -477,24 +486,25 @@ func TestValidate_ConfluencePathAcceptsWiki(t *testing.T) {
 
 func TestValidate_ConfluencePathRejectsOther(t *testing.T) {
 	cfg := baseValidConfig()
-	cfg.Confluence.BaseURL = "https://mycompany.atlassian.net/foo"
+	cfg.Destinations.Confluence.BaseURL = "https://mycompany.atlassian.net/foo"
 	err := cfg.validate()
 	if err == nil {
 		t.Fatal("validate() expected error for base_url with non-empty, non-/wiki path, got nil")
 	}
-	if !strings.Contains(err.Error(), "confluence.base_url") {
-		t.Errorf("error = %q, want it to mention %q", err.Error(), "confluence.base_url")
+	if !strings.Contains(err.Error(), "destinations.confluence.base_url") {
+		t.Errorf("error = %q, want it to mention %q", err.Error(), "destinations.confluence.base_url")
 	}
 }
 
 func TestValidate_ConfluenceDisabledSkipsPathValidation(t *testing.T) {
 	cfg := baseValidConfig()
 	f := false
-	cfg.Confluence.Enabled = &f
-	cfg.Confluence.BaseURL = "https://mycompany.atlassian.net/foo"
-	cfg.Confluence.Email = ""
-	cfg.Confluence.APIToken = ""
-	cfg.Confluence.SpaceKey = ""
+	cfg.Destinations.Confluence.Enabled = &f
+	cfg.DryRun = true // zero destinations is only valid in dry-run mode
+	cfg.Destinations.Confluence.BaseURL = "https://mycompany.atlassian.net/foo"
+	cfg.Destinations.Confluence.Email = ""
+	cfg.Destinations.Confluence.APIToken = ""
+	cfg.Destinations.Confluence.SpaceKey = ""
 
 	err := cfg.validate()
 	if err != nil {
@@ -505,7 +515,7 @@ func TestValidate_ConfluenceDisabledSkipsPathValidation(t *testing.T) {
 func TestValidate_ConfluenceEnabledByDefault(t *testing.T) {
 	cfg := baseValidConfig()
 	// Enabled is nil (default) — should still validate confluence fields.
-	if !cfg.Confluence.IsEnabled() {
+	if !cfg.Destinations.Confluence.IsEnabled() {
 		t.Error("IsEnabled() should return true when Enabled is nil")
 	}
 }
@@ -665,5 +675,65 @@ func TestValidate_ZeroTemplates(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "at least one entry") {
 		t.Errorf("error = %q, want it to mention %q", err.Error(), "at least one entry")
+	}
+}
+
+func TestLoad_RejectsOldSchema(t *testing.T) {
+	dir := t.TempDir()
+	old := "google:\n  credentials_file: /a/b.json\n  token_file: /a/t.json\n  folder_id: abc123folder\n"
+	path := writeYAML(t, dir, old)
+
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("Load() expected old-schema error, got nil")
+	}
+	if !strings.Contains(err.Error(), "sources.googlemeet") {
+		t.Errorf("error = %q, want migration hint mentioning sources.googlemeet", err.Error())
+	}
+}
+
+func TestValidate_RequiresEnabledSourceAndDestination(t *testing.T) {
+	disabled := false
+
+	cfg := baseValidConfig()
+	cfg.Sources.GoogleMeet.Enabled = &disabled
+	if err := cfg.validate(); err == nil || !strings.Contains(err.Error(), "at least one source") {
+		t.Errorf("validate() = %v, want at-least-one-source error", err)
+	}
+
+	cfg = baseValidConfig()
+	cfg.Destinations.Confluence.Enabled = &disabled
+	if err := cfg.validate(); err == nil || !strings.Contains(err.Error(), "at least one destination") {
+		t.Errorf("validate() = %v, want at-least-one-destination error", err)
+	}
+
+	// Dry-run permits zero destinations.
+	cfg = baseValidConfig()
+	cfg.Destinations.Confluence.Enabled = &disabled
+	cfg.DryRun = true
+	if err := cfg.validate(); err != nil {
+		t.Errorf("validate() with dry_run = %v, want nil", err)
+	}
+}
+
+func TestValidate_GoogleMeetDisabledSkipsValidation(t *testing.T) {
+	disabled := false
+	cfg := baseValidConfig()
+	cfg.Sources.GoogleMeet.Enabled = &disabled
+	cfg.Sources.GoogleMeet.CredentialsFile = ""
+	cfg.Sources.GoogleMeet.FolderID = ""
+	cfg.DryRun = true // no enabled source means validation must not require its fields
+
+	err := cfg.validate()
+	if err == nil || !strings.Contains(err.Error(), "at least one source") {
+		t.Errorf("validate() = %v, want only the at-least-one-source error (no field errors)", err)
+	}
+}
+
+func TestApplyDefaults_MaxTranscriptChars(t *testing.T) {
+	cfg := baseValidConfig()
+	cfg.applyDefaults()
+	if cfg.LLM.MaxTranscriptChars != 100000 {
+		t.Errorf("MaxTranscriptChars = %d, want 100000", cfg.LLM.MaxTranscriptChars)
 	}
 }

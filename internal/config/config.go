@@ -14,20 +14,42 @@ import (
 
 // Config is the top-level configuration for the omniscient application.
 type Config struct {
-	Google     GoogleConfig     `yaml:"google"`
-	LLM        LLMConfig        `yaml:"llm"`
-	Confluence ConfluenceConfig `yaml:"confluence"`
-	Sync       SyncConfig       `yaml:"sync"`
-	Logging    LoggingConfig    `yaml:"logging"`
-	DryRun     bool             `yaml:"dry_run"`
-	Prompts    PromptsConfig    `yaml:"prompts"`
+	Sources      SourcesConfig      `yaml:"sources"`
+	Destinations DestinationsConfig `yaml:"destinations"`
+	LLM          LLMConfig          `yaml:"llm"`
+	Sync         SyncConfig         `yaml:"sync"`
+	Logging      LoggingConfig      `yaml:"logging"`
+	DryRun       bool               `yaml:"dry_run"`
+	Prompts      PromptsConfig      `yaml:"prompts"`
 }
 
-// GoogleConfig holds Google Drive OAuth2 and folder settings.
-type GoogleConfig struct {
+// SourcesConfig holds one optional entry per supported meeting platform.
+// To add a provider, add a field here and wire it in cmd/omniscient/sync.go —
+// see docs/ADDING_A_PROVIDER.md.
+type SourcesConfig struct {
+	GoogleMeet GoogleMeetConfig `yaml:"googlemeet"`
+}
+
+// GoogleMeetConfig configures harvesting Google Meet transcripts, which Meet
+// saves as Google Docs in a Drive folder.
+type GoogleMeetConfig struct {
+	Enabled         *bool  `yaml:"enabled"`
 	CredentialsFile string `yaml:"credentials_file"`
 	TokenFile       string `yaml:"token_file"`
 	FolderID        string `yaml:"folder_id"`
+}
+
+// IsEnabled defaults to true when the field is unset.
+func (c *GoogleMeetConfig) IsEnabled() bool {
+	if c.Enabled == nil {
+		return true
+	}
+	return *c.Enabled
+}
+
+// DestinationsConfig holds one optional entry per supported knowledge base.
+type DestinationsConfig struct {
+	Confluence ConfluenceConfig `yaml:"confluence"`
 }
 
 // LLMConfig holds LLM provider settings for transcript extraction.
@@ -38,6 +60,9 @@ type LLMConfig struct {
 	OpenAIAPIKey    string `yaml:"openai_api_key"`
 	Model           string `yaml:"model"`
 	Timeout         int    `yaml:"timeout"`
+	// MaxTranscriptChars triggers a warning (not a failure) for transcripts
+	// longer than this; very long inputs degrade small-model output quality.
+	MaxTranscriptChars int `yaml:"max_transcript_chars"`
 }
 
 // ConfluenceConfig holds Atlassian Confluence publishing settings.
@@ -103,7 +128,7 @@ func validateURL(field, u string, allowedSchemes []string) error {
 func validateConfluencePath(u string) error {
 	parsed, err := url.ParseRequestURI(u)
 	if err != nil {
-		return fmt.Errorf("confluence.base_url is not a valid URL: %w", err)
+		return fmt.Errorf("destinations.confluence.base_url is not a valid URL: %w", err)
 	}
 	path := parsed.Path
 	// Strip trailing slash for comparison.
@@ -111,7 +136,7 @@ func validateConfluencePath(u string) error {
 		path = strings.TrimSuffix(path, "/")
 	}
 	if path != "" && path != "/wiki" {
-		return fmt.Errorf("confluence.base_url path must be empty or \"/wiki\", got %q", parsed.Path)
+		return fmt.Errorf("destinations.confluence.base_url path must be empty or \"/wiki\", got %q", parsed.Path)
 	}
 	return nil
 }
@@ -153,6 +178,18 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("parsing config file %s: %w", path, err)
 	}
 
+	// Detect the pre-v2 single-provider schema and fail with a migration hint
+	// instead of confusing field-level validation errors.
+	var probe map[string]any
+	if err := yaml.Unmarshal(data, &probe); err == nil {
+		if _, ok := probe["google"]; ok {
+			return nil, fmt.Errorf("config file %s uses the old schema: move google: to sources.googlemeet: and confluence: to destinations.confluence: (see config.yaml.example)", path)
+		}
+		if _, ok := probe["confluence"]; ok {
+			return nil, fmt.Errorf("config file %s uses the old schema: move confluence: to destinations.confluence: (see config.yaml.example)", path)
+		}
+	}
+
 	cfg.applyDefaults()
 
 	if err := cfg.validate(); err != nil {
@@ -166,6 +203,9 @@ func Load(path string) (*Config, error) {
 func (c *Config) applyDefaults() {
 	if c.LLM.Timeout == 0 {
 		c.LLM.Timeout = 120
+	}
+	if c.LLM.MaxTranscriptChars == 0 {
+		c.LLM.MaxTranscriptChars = 100000
 	}
 	if c.Sync.LookbackHours == 0 {
 		c.Sync.LookbackHours = 24
@@ -187,18 +227,38 @@ func (c *Config) applyDefaults() {
 // validate checks all required fields and returns a descriptive error for the
 // first validation failure encountered. Defaults must be applied before calling.
 func (c *Config) validate() error {
-	// Google config validation.
-	if err := validateFilePath("google.credentials_file", c.Google.CredentialsFile); err != nil {
-		return err
+	// At least one source must be enabled; destinations may all be disabled
+	// only in dry-run mode (extraction output goes to logs instead).
+	enabledSources := 0
+	if c.Sources.GoogleMeet.IsEnabled() {
+		enabledSources++
 	}
-	if err := validateFilePath("google.token_file", c.Google.TokenFile); err != nil {
-		return err
+	if enabledSources == 0 {
+		return fmt.Errorf("at least one source must be enabled under sources:")
 	}
-	if c.Google.FolderID == "" {
-		return fmt.Errorf("google.folder_id must not be empty")
+
+	enabledDestinations := 0
+	if c.Destinations.Confluence.IsEnabled() {
+		enabledDestinations++
 	}
-	if !driveIDPattern.MatchString(c.Google.FolderID) {
-		return fmt.Errorf("google.folder_id contains unexpected characters; expected an alphanumeric Google Drive ID")
+	if enabledDestinations == 0 && !c.DryRun {
+		return fmt.Errorf("at least one destination must be enabled under destinations: (or set dry_run: true)")
+	}
+
+	// Google Meet source validation (skip when disabled).
+	if c.Sources.GoogleMeet.IsEnabled() {
+		if err := validateFilePath("sources.googlemeet.credentials_file", c.Sources.GoogleMeet.CredentialsFile); err != nil {
+			return err
+		}
+		if err := validateFilePath("sources.googlemeet.token_file", c.Sources.GoogleMeet.TokenFile); err != nil {
+			return err
+		}
+		if c.Sources.GoogleMeet.FolderID == "" {
+			return fmt.Errorf("sources.googlemeet.folder_id must not be empty")
+		}
+		if !driveIDPattern.MatchString(c.Sources.GoogleMeet.FolderID) {
+			return fmt.Errorf("sources.googlemeet.folder_id contains unexpected characters; expected an alphanumeric Google Drive ID")
+		}
 	}
 
 	// LLM config validation.
@@ -225,25 +285,25 @@ func (c *Config) validate() error {
 		return fmt.Errorf("llm.model must not be empty")
 	}
 
-	// Confluence config validation (skip when disabled).
-	if c.Confluence.IsEnabled() {
-		if c.Confluence.BaseURL == "" {
-			return fmt.Errorf("confluence.base_url must not be empty")
+	// Confluence destination validation (skip when disabled).
+	if c.Destinations.Confluence.IsEnabled() {
+		if c.Destinations.Confluence.BaseURL == "" {
+			return fmt.Errorf("destinations.confluence.base_url must not be empty")
 		}
-		if err := validateURL("confluence.base_url", c.Confluence.BaseURL, []string{"https"}); err != nil {
+		if err := validateURL("destinations.confluence.base_url", c.Destinations.Confluence.BaseURL, []string{"https"}); err != nil {
 			return err
 		}
-		if err := validateConfluencePath(c.Confluence.BaseURL); err != nil {
+		if err := validateConfluencePath(c.Destinations.Confluence.BaseURL); err != nil {
 			return err
 		}
-		if c.Confluence.Email == "" {
-			return fmt.Errorf("confluence.email must not be empty")
+		if c.Destinations.Confluence.Email == "" {
+			return fmt.Errorf("destinations.confluence.email must not be empty")
 		}
-		if c.Confluence.APIToken == "" {
-			return fmt.Errorf("confluence.api_token must not be empty")
+		if c.Destinations.Confluence.APIToken == "" {
+			return fmt.Errorf("destinations.confluence.api_token must not be empty")
 		}
-		if c.Confluence.SpaceKey == "" {
-			return fmt.Errorf("confluence.space_key must not be empty")
+		if c.Destinations.Confluence.SpaceKey == "" {
+			return fmt.Errorf("destinations.confluence.space_key must not be empty")
 		}
 	}
 
