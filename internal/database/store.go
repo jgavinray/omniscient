@@ -129,7 +129,7 @@ func ensureSchema(db *sql.DB) error {
 		if _, err := db.Exec(schema); err != nil {
 			return fmt.Errorf("create target schema: %w", err)
 		}
-		return nil
+		return ensureVersion(db)
 	}
 
 	// Table exists: check whether it has the new status column.
@@ -162,11 +162,75 @@ func ensureSchema(db *sql.DB) error {
 				return fmt.Errorf("create sync_events table: %w", err)
 			}
 		}
-		return nil
+		return ensureVersion(db)
 	}
 
 	// Old schema detected: migrate via transaction.
-	return migrateOldSchema(db)
+	if err := migrateOldSchema(db); err != nil {
+		return err
+	}
+	return ensureVersion(db)
+}
+
+// targetSchemaVersion is bumped whenever a data migration is added.
+// Version 2 introduced source-prefixed transcript IDs ("googlemeet:<id>").
+const targetSchemaVersion = 2
+
+// ensureVersion creates the schema_version table if needed and runs any
+// pending data migrations, stamping the target version when done.
+func ensureVersion(db *sql.DB) error {
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)`); err != nil {
+		return fmt.Errorf("create schema_version table: %w", err)
+	}
+
+	var version int
+	err := db.QueryRow(`SELECT version FROM schema_version LIMIT 1`).Scan(&version)
+	if err == sql.ErrNoRows {
+		version = 1 // pre-versioning databases are treated as v1
+	} else if err != nil {
+		return fmt.Errorf("read schema version: %w", err)
+	}
+
+	if version >= targetSchemaVersion {
+		return nil
+	}
+
+	if version < 2 {
+		if err := migrateToV2(db); err != nil {
+			return err
+		}
+	}
+
+	if _, err := db.Exec(`DELETE FROM schema_version`); err != nil {
+		return fmt.Errorf("clear schema version: %w", err)
+	}
+	if _, err := db.Exec(`INSERT INTO schema_version (version) VALUES (?)`, targetSchemaVersion); err != nil {
+		return fmt.Errorf("stamp schema version: %w", err)
+	}
+	return nil
+}
+
+// migrateToV2 prefixes legacy transcript IDs with "googlemeet:" — before v2
+// the only source was Google Meet via Drive, so all unprefixed IDs belong to
+// it. Prefixing keeps multi-source dedup keys collision-free. It is a no-op
+// on fresh (empty) databases.
+func migrateToV2(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin v2 migration: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`UPDATE processed_transcripts SET transcript_id = 'googlemeet:' || transcript_id WHERE transcript_id NOT LIKE '%:%'`); err != nil {
+		return fmt.Errorf("prefix processed_transcripts ids: %w", err)
+	}
+	if _, err := tx.Exec(`UPDATE sync_events SET transcript_id = 'googlemeet:' || transcript_id WHERE transcript_id != '' AND transcript_id NOT LIKE '%:%'`); err != nil {
+		return fmt.Errorf("prefix sync_events ids: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit v2 migration: %w", err)
+	}
+	return nil
 }
 
 // migrateOldSchema creates processed_transcripts_new with the target schema,

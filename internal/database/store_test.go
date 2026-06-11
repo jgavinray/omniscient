@@ -375,15 +375,15 @@ func TestNewStore_MigratesOldSchemaAsPublished(t *testing.T) {
 
 	ctx := context.Background()
 
-	ok, err := store.IsProcessed(ctx, "old-1")
+	ok, err := store.IsProcessed(ctx, "googlemeet:old-1")
 	if err != nil {
 		t.Fatalf("IsProcessed: %v", err)
 	}
 	if !ok {
-		t.Fatal("IsProcessed('old-1') = false, want true")
+		t.Fatal("IsProcessed('googlemeet:old-1') = false, want true")
 	}
 
-	rec, err := store.GetTranscript(ctx, "old-1")
+	rec, err := store.GetTranscript(ctx, "googlemeet:old-1")
 	if err != nil {
 		t.Fatalf("GetTranscript: %v", err)
 	}
@@ -685,5 +685,46 @@ func TestNewStore_LegacyMigrationCreatesSyncEvents(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].ID != "event-legacy" {
 		t.Fatalf("legacy sync_events query returned %#v, want event-legacy", got)
+	}
+}
+
+func TestMigrationV2PrefixesUnprefixedKeys(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+
+	// First open creates the current schema; insert a legacy (unprefixed) row.
+	s, err := NewStore(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if err := s.MarkProcessed(ctx, "abc123", "Old Meeting", "https://x/page"); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate a pre-v2 database: clear the version stamp.
+	if _, err := s.db.Exec(`DELETE FROM schema_version`); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+
+	// Re-open: v2 migration must prefix the key.
+	s2, err := NewStore(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s2.Close()
+
+	processed, err := s2.IsProcessed(ctx, "googlemeet:abc123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !processed {
+		t.Error("expected googlemeet:abc123 to be processed after v2 migration")
+	}
+	processed, err = s2.IsProcessed(ctx, "abc123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if processed {
+		t.Error("unprefixed key abc123 should no longer exist after migration")
 	}
 }
