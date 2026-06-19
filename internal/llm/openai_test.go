@@ -1,7 +1,6 @@
 package llm
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -34,7 +33,7 @@ func TestOpenAIExtract_Success(t *testing.T) {
 
 	e := NewOpenAIExtractor(server.URL, "test-key", "test-model", 10*time.Second)
 
-	result, err := e.Extract(context.Background(), "Alice: Sprint looks good.\nBob: Agreed.", "Extract: {{TRANSCRIPT}}")
+	result, err := e.Extract("Alice: Sprint looks good.\nBob: Agreed.", "Extract: {{TRANSCRIPT}}")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -56,7 +55,7 @@ func TestOpenAIExtract_EmptyChoices(t *testing.T) {
 
 	e := NewOpenAIExtractor(server.URL, "test-key", "test-model", 10*time.Second)
 
-	_, err := e.Extract(context.Background(), "some transcript", "Extract: {{TRANSCRIPT}}")
+	_, err := e.Extract("some transcript", "Extract: {{TRANSCRIPT}}")
 	if err == nil {
 		t.Fatal("expected error for empty choices, got nil")
 	}
@@ -80,7 +79,7 @@ func TestOpenAIExtract_ServerError(t *testing.T) {
 
 	e := NewOpenAIExtractor(server.URL, "test-key", "test-model", 10*time.Second)
 
-	result, err := e.Extract(context.Background(), "some transcript", "Extract: {{TRANSCRIPT}}")
+	result, err := e.Extract("some transcript", "Extract: {{TRANSCRIPT}}")
 	if err != nil {
 		t.Fatalf("unexpected error after retries: %v", err)
 	}
@@ -113,7 +112,7 @@ func TestOpenAIExtract_RateLimit(t *testing.T) {
 
 	e := NewOpenAIExtractor(server.URL, "test-key", "test-model", 10*time.Second)
 
-	result, err := e.Extract(context.Background(), "some transcript", "Extract: {{TRANSCRIPT}}")
+	result, err := e.Extract("some transcript", "Extract: {{TRANSCRIPT}}")
 	if err != nil {
 		t.Fatalf("unexpected error after retry: %v", err)
 	}
@@ -140,7 +139,7 @@ func TestOpenAIExtract_PermanentError(t *testing.T) {
 
 	e := NewOpenAIExtractor(server.URL, "test-key", "test-model", 10*time.Second)
 
-	_, err := e.Extract(context.Background(), "some transcript", "Extract: {{TRANSCRIPT}}")
+	_, err := e.Extract("some transcript", "Extract: {{TRANSCRIPT}}")
 	if err == nil {
 		t.Fatal("expected error for 401, got nil")
 	}
@@ -160,7 +159,7 @@ func TestOpenAIClassify_Success(t *testing.T) {
 
 	e := NewOpenAIExtractor(server.URL, "test-key", "test-model", 10*time.Second)
 
-	result, err := e.Classify(context.Background(), "Alice: Let's plan the sprint.", []string{"engineering", "planning"}, "Classify: {{TEMPLATE_KEYS}}\n{{TRANSCRIPT_PREVIEW}}")
+	result, err := e.Classify("Alice: Let's plan the sprint.", []string{"engineering", "planning"}, "Classify: {{TEMPLATE_KEYS}}\n{{TRANSCRIPT_PREVIEW}}")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -179,7 +178,7 @@ func TestOpenAIClassify_ReturnsRawKey(t *testing.T) {
 
 	e := NewOpenAIExtractor(server.URL, "test-key", "test-model", 10*time.Second)
 
-	result, err := e.Classify(context.Background(), "preview text", []string{"engineering", "customer_success"}, "Classify: {{TEMPLATE_KEYS}}\n{{TRANSCRIPT_PREVIEW}}")
+	result, err := e.Classify("preview text", []string{"engineering", "customer_success"}, "Classify: {{TEMPLATE_KEYS}}\n{{TRANSCRIPT_PREVIEW}}")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

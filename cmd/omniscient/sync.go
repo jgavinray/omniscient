@@ -1,13 +1,9 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"log/slog"
-	"os/signal"
 	"sort"
-	"strings"
-	"syscall"
 	"time"
 
 	"github.com/jgavinray/omniscient/internal/config"
@@ -29,13 +25,9 @@ func newSyncCmd() *cobra.Command {
 				return fmt.Errorf("loading config: %w", err)
 			}
 
-			setupLogging(cfg.Logging.Level, cfg.Logging.File)
+			setupLogging(cfg.Logging.Level)
 
-			// Set up context with signal handling for graceful shutdown.
-			ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
-			defer stop()
-
-			return runSync(ctx, cfg)
+			return runSync(cfg)
 		},
 	}
 }
@@ -43,7 +35,7 @@ func newSyncCmd() *cobra.Command {
 // runSync wires up all dependencies and delegates to the sync service.
 func runSync(ctx context.Context, cfg *config.Config) error {
 	// Initialize Google Drive client.
-	driveClient, err := drive.NewClient(ctx, cfg.Google.CredentialsFile, cfg.Google.TokenFile)
+	driveClient, err := drive.NewClient(cfg.Google.CredentialsFile, cfg.Google.TokenFile)
 	if err != nil {
 		return fmt.Errorf("init drive client: %w", err)
 	}
@@ -227,12 +219,6 @@ func (s *SyncService) Run(ctx context.Context) error {
 	persistenceFailures := 0
 	publishFailures := 0
 	for i, transcript := range pending {
-		// Check for cancellation between transcripts.
-		if err := ctx.Err(); err != nil {
-			slog.Warn("sync cancelled", "processed", successCount, "remaining", len(pending)-i)
-			break
-		}
-
 		slog.Info("processing transcript",
 			"num", i+1,
 			"total", len(pending),

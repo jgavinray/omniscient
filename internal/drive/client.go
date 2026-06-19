@@ -33,7 +33,7 @@ type Client struct {
 //
 // The token must already exist — run the `auth` command first to perform the
 // interactive browser consent flow.
-func NewClient(ctx context.Context, credentialsPath, tokenPath string) (*Client, error) {
+func NewClient(credentialsPath, tokenPath string) (*Client, error) {
 	config, err := loadOAuthConfig(credentialsPath)
 	if err != nil {
 		return nil, fmt.Errorf("loading OAuth config: %w", err)
@@ -47,10 +47,10 @@ func NewClient(ctx context.Context, credentialsPath, tokenPath string) (*Client,
 		return nil, fmt.Errorf("no token found at %s — run the 'auth' command first to authorize", tokenPath)
 	}
 
-	tokenSource := getTokenSource(ctx, config, tokenPath, token)
-	httpClient := oauth2.NewClient(ctx, tokenSource)
+	tokenSource := getTokenSource(config, tokenPath, token)
+	httpClient := oauth2.NewClient(context.Background(), tokenSource)
 
-	service, err := drive.NewService(ctx, option.WithHTTPClient(httpClient))
+	service, err := drive.NewService(context.Background(), option.WithHTTPClient(httpClient))
 	if err != nil {
 		return nil, fmt.Errorf("creating Drive service: %w", err)
 	}
@@ -64,7 +64,7 @@ func NewClient(ctx context.Context, credentialsPath, tokenPath string) (*Client,
 // been modified within the given duration. Each document is exported as
 // plain text. If a single file export fails, the error is logged and that
 // file is skipped — remaining files are still processed.
-func (c *Client) GetRecentTranscripts(ctx context.Context, folderID string, since time.Duration) ([]*Transcript, error) {
+func (c *Client) GetRecentTranscripts(folderID string, since time.Duration) ([]*Transcript, error) {
 	cutoff := time.Now().UTC().Add(-since)
 	cutoffStr := cutoff.Format(time.RFC3339)
 
@@ -83,7 +83,6 @@ func (c *Client) GetRecentTranscripts(ctx context.Context, folderID string, sinc
 
 	for {
 		call := c.service.Files.List().
-			Context(ctx).
 			Q(query).
 			Fields("nextPageToken, files(id, name, modifiedTime)").
 			OrderBy("modifiedTime desc").
@@ -110,7 +109,7 @@ func (c *Client) GetRecentTranscripts(ctx context.Context, folderID string, sinc
 				continue
 			}
 
-			content, err := c.exportFileAsText(ctx, file.Id)
+			content, err := c.exportFileAsText(file.Id)
 			if err != nil {
 				slog.Warn("failed to export file as text, skipping",
 					"file_id", file.Id,
@@ -149,20 +148,16 @@ func (c *Client) GetRecentTranscripts(ctx context.Context, folderID string, sinc
 }
 
 // exportFileAsText exports a Google Docs file as plain text.
-func (c *Client) exportFileAsText(ctx context.Context, fileID string) (string, error) {
-	resp, err := c.service.Files.Export(fileID, "text/plain").Context(ctx).Download()
+func (c *Client) exportFileAsText(fileID string) (string, error) {
+	resp, err := c.service.Files.Export(fileID, "text/plain").Download()
 	if err != nil {
 		return "", fmt.Errorf("exporting file %s as text/plain: %w", fileID, err)
 	}
 	defer resp.Body.Close()
 
-	const maxTranscriptBytes = 50 * 1024 * 1024 // 50 MB
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxTranscriptBytes))
+	data, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", fmt.Errorf("reading exported content for file %s: %w", fileID, err)
-	}
-	if int64(len(data)) >= maxTranscriptBytes {
-		return "", fmt.Errorf("exported content for file %s exceeded %d byte limit", fileID, maxTranscriptBytes)
 	}
 
 	content := strings.TrimSpace(string(data))

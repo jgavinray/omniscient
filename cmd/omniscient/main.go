@@ -14,9 +14,9 @@ import (
 )
 
 var (
-	version  = "dev"
-	cfgFile  string
-	logLevel string
+	version   = "dev"
+	cfgFile   string
+	logLevel  string
 )
 
 func main() {
@@ -24,12 +24,11 @@ func main() {
 		Use:   "omniscient",
 		Short: "Meeting transcript harvester: Google Drive → LLM extraction → Confluence",
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
-			setupLogging(logLevel, "")
+			setupLogging(logLevel)
 		},
 	}
 
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "/opt/omniscient/config.yaml", "config file path")
-	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", "info", "log level (debug, info, warn, error)")
 
 	rootCmd.AddCommand(newVersionCmd())
 	rootCmd.AddCommand(newSyncCmd())
@@ -54,7 +53,7 @@ func newVersionCmd() *cobra.Command {
 	}
 }
 
-func setupLogging(level, filePath string) {
+func setupLogging(level string) {
 	var programLevel slog.Level
 	switch strings.ToLower(level) {
 	case "debug":
@@ -68,17 +67,7 @@ func setupLogging(level, filePath string) {
 	}
 
 	opts := &slog.HandlerOptions{Level: programLevel}
-
 	var w io.Writer = os.Stdout
-	if filePath != "" {
-		f, err := os.OpenFile(filePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
-		if err != nil {
-			// Fall back to stdout if we can't open the log file.
-			slog.Error("could not open log file, falling back to stdout", "path", filePath, "error", err)
-		} else {
-			w = io.MultiWriter(os.Stdout, f)
-		}
-	}
 
 	handler := slog.NewTextHandler(w, opts)
 	slog.SetDefault(slog.New(handler))

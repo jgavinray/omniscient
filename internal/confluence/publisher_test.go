@@ -1,7 +1,6 @@
 package confluence
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -97,7 +96,6 @@ func TestPublishMarkdown_URLNormalization(t *testing.T) {
 }
 
 func TestPublishMarkdown_CreateNewPage(t *testing.T) {
-	ctx := context.Background()
 	var (
 		capturedMethod string
 		capturedPath   string
@@ -132,7 +130,7 @@ func TestPublishMarkdown_CreateNewPage(t *testing.T) {
 	client := NewClient(server.URL, "test@example.com", "test-token")
 	result := sampleExtractionResult()
 
-	pageURL, err := client.PublishMarkdown(ctx, "ENG", "100", result, "Sprint Planning Notes.gdoc")
+	pageURL, err := client.PublishMarkdown("ENG", "100", result, "Sprint Planning Notes.gdoc")
 	if err != nil {
 		t.Fatalf("PublishMarkdown returned unexpected error: %v", err)
 	}
@@ -184,7 +182,6 @@ func TestPublishMarkdown_CreateNewPage(t *testing.T) {
 }
 
 func TestPublishMarkdown_UpdateExistingPage(t *testing.T) {
-	ctx := context.Background()
 	var capturedUpdateVersion int
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -228,7 +225,7 @@ func TestPublishMarkdown_UpdateExistingPage(t *testing.T) {
 	client := NewClient(server.URL, "test@example.com", "test-token")
 	result := sampleExtractionResult()
 
-	_, err := client.PublishMarkdown(ctx, "ENG", "", result, "Standup Notes")
+	_, err := client.PublishMarkdown("ENG", "", result, "Standup Notes")
 	if err != nil {
 		t.Fatalf("PublishMarkdown returned unexpected error: %v", err)
 	}
@@ -240,7 +237,6 @@ func TestPublishMarkdown_UpdateExistingPage(t *testing.T) {
 }
 
 func TestPublishMarkdown_StripExtension(t *testing.T) {
-	ctx := context.Background()
 	var capturedTitle string
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -263,7 +259,7 @@ func TestPublishMarkdown_StripExtension(t *testing.T) {
 	client := NewClient(server.URL, "test@example.com", "test-token")
 	result := sampleExtractionResult()
 
-	_, err := client.PublishMarkdown(ctx, "ENG", "", result, "Team Standup.gdoc")
+	_, err := client.PublishMarkdown("ENG", "", result, "Team Standup.gdoc")
 	if err != nil {
 		t.Fatalf("PublishMarkdown returned unexpected error: %v", err)
 	}
@@ -357,7 +353,7 @@ func TestPublishMarkdown_ServerError_Retry(t *testing.T) {
 
 	result := sampleExtractionResult()
 
-	pageURL, err := client.PublishMarkdown(ctx, "ENG", "", result, "Retry Test")
+	pageURL, err := client.PublishMarkdown("ENG", "", result, "Retry Test")
 	if err != nil {
 		t.Fatalf("PublishMarkdown should succeed after retries, got error: %v", err)
 	}
@@ -407,7 +403,7 @@ func TestPublishMarkdown_RateLimit_Retry(t *testing.T) {
 
 	result := sampleExtractionResult()
 
-	pageURL, err := client.PublishMarkdown(ctx, "ENG", "", result, "Rate Limit Test")
+	pageURL, err := client.PublishMarkdown("ENG", "", result, "Rate Limit Test")
 	if err != nil {
 		t.Fatalf("PublishMarkdown should succeed after rate limit retry, got error: %v", err)
 	}

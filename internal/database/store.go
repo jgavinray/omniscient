@@ -1,7 +1,6 @@
 package database
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 	"os"
@@ -43,7 +42,7 @@ type Store struct {
 // parent directory exists, creates the schema if needed, and enables WAL mode.
 func NewStore(dbPath string) (*Store, error) {
 	dir := filepath.Dir(dbPath)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("create database directory %s: %w", dir, err)
 	}
 
@@ -316,8 +315,8 @@ func (s *Store) IsProcessed(ctx context.Context, transcriptID string) (bool, err
 // MarkProcessed records a transcript as processed. The operation is
 // idempotent — re-inserting an existing transcript_id is silently ignored.
 // A transaction is used for atomicity.
-func (s *Store) MarkProcessed(ctx context.Context, transcriptID, transcriptName, confluenceURL string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+func (s *Store) MarkProcessed(transcriptID, transcriptName, confluenceURL string) error {
+	tx, err := s.db.Begin()
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}

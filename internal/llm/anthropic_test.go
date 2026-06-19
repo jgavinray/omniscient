@@ -1,7 +1,6 @@
 package llm
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -48,7 +47,7 @@ func TestAnthropicExtract_Success(t *testing.T) {
 	e := NewAnthropicExtractor("sk-ant-test-key", "claude-sonnet-4-20250514", 10*time.Second)
 	e.baseURL = server.URL
 
-	result, err := e.Extract(context.Background(), "Alice: Sprint looks good.\nBob: Agreed.", "Extract: {{TRANSCRIPT}}")
+	result, err := e.Extract("Alice: Sprint looks good.\nBob: Agreed.", "Extract: {{TRANSCRIPT}}")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -72,7 +71,7 @@ func TestAnthropicExtract_EmptyContent(t *testing.T) {
 	e := NewAnthropicExtractor("sk-ant-test-key", "claude-sonnet-4-20250514", 10*time.Second)
 	e.baseURL = server.URL
 
-	_, err := e.Extract(context.Background(), "some transcript", "Extract: {{TRANSCRIPT}}")
+	_, err := e.Extract("some transcript", "Extract: {{TRANSCRIPT}}")
 	if err == nil {
 		t.Fatal("expected error for empty content, got nil")
 	}
@@ -97,7 +96,7 @@ func TestAnthropicExtract_ServerError(t *testing.T) {
 	e := NewAnthropicExtractor("sk-ant-test-key", "claude-sonnet-4-20250514", 10*time.Second)
 	e.baseURL = server.URL
 
-	result, err := e.Extract(context.Background(), "some transcript", "Extract: {{TRANSCRIPT}}")
+	result, err := e.Extract("some transcript", "Extract: {{TRANSCRIPT}}")
 	if err != nil {
 		t.Fatalf("unexpected error after retries: %v", err)
 	}
@@ -131,7 +130,7 @@ func TestAnthropicExtract_RateLimit(t *testing.T) {
 	e := NewAnthropicExtractor("sk-ant-test-key", "claude-sonnet-4-20250514", 10*time.Second)
 	e.baseURL = server.URL
 
-	result, err := e.Extract(context.Background(), "some transcript", "Extract: {{TRANSCRIPT}}")
+	result, err := e.Extract("some transcript", "Extract: {{TRANSCRIPT}}")
 	if err != nil {
 		t.Fatalf("unexpected error after retry: %v", err)
 	}
@@ -159,7 +158,7 @@ func TestAnthropicExtract_PermanentError(t *testing.T) {
 	e := NewAnthropicExtractor("sk-ant-test-key", "claude-sonnet-4-20250514", 10*time.Second)
 	e.baseURL = server.URL
 
-	_, err := e.Extract(context.Background(), "some transcript", "Extract: {{TRANSCRIPT}}")
+	_, err := e.Extract("some transcript", "Extract: {{TRANSCRIPT}}")
 	if err == nil {
 		t.Fatal("expected error for 401, got nil")
 	}
@@ -180,7 +179,7 @@ func TestAnthropicClassify_Success(t *testing.T) {
 	e := NewAnthropicExtractor("sk-ant-test-key", "claude-sonnet-4-20250514", 10*time.Second)
 	e.baseURL = server.URL
 
-	result, err := e.Classify(context.Background(), "Alice: Sprint looks good.", []string{"engineering", "planning"}, "Classify: {{TEMPLATE_KEYS}}\n{{TRANSCRIPT_PREVIEW}}")
+	result, err := e.Classify("Alice: Sprint looks good.", []string{"engineering", "planning"}, "Classify: {{TEMPLATE_KEYS}}\n{{TRANSCRIPT_PREVIEW}}")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -201,7 +200,7 @@ func TestAnthropicClassify_ReturnsRawKey(t *testing.T) {
 	e := NewAnthropicExtractor("sk-ant-test-key", "claude-sonnet-4-20250514", 10*time.Second)
 	e.baseURL = server.URL
 
-	result, err := e.Classify(context.Background(), "preview text", []string{"engineering", "customer_success"}, "Classify: {{TEMPLATE_KEYS}}\n{{TRANSCRIPT_PREVIEW}}")
+	result, err := e.Classify("preview text", []string{"engineering", "customer_success"}, "Classify: {{TEMPLATE_KEYS}}\n{{TRANSCRIPT_PREVIEW}}")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

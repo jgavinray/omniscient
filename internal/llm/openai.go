@@ -2,7 +2,6 @@ package llm
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -30,9 +29,6 @@ func NewOpenAIExtractor(baseURL, apiKey, model string, timeout time.Duration) *O
 		model:   model,
 		httpClient: &http.Client{
 			Timeout: timeout,
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				return fmt.Errorf("unexpected redirect to %s", req.URL)
-			},
 		},
 	}
 }
@@ -61,7 +57,7 @@ type openaiResponse struct {
 }
 
 // callAPI sends a prompt to the OpenAI-compatible API and returns the response text.
-func (e *OpenAIExtractor) callAPI(ctx context.Context, prompt string, maxTokens int) (string, error) {
+func (e *OpenAIExtractor) callAPI(prompt string, maxTokens int) (string, error) {
 	reqBody := openaiRequest{
 		Model: e.model,
 		Messages: []openaiMessage{
@@ -93,19 +89,15 @@ func (e *OpenAIExtractor) callAPI(ctx context.Context, prompt string, maxTokens 
 		}
 		defer resp.Body.Close()
 
-		const maxResponseBytes = 10 * 1024 * 1024 // 10 MB
-		body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
+		body, err := io.ReadAll(resp.Body)
 		if err != nil {
 			return fmt.Errorf("reading openai response body: %w", err)
-		}
-		if int64(len(body)) >= maxResponseBytes {
-			return fmt.Errorf("openai response exceeded %d byte limit", maxResponseBytes)
 		}
 
 		if resp.StatusCode != http.StatusOK {
 			err := &httpError{
 				StatusCode: resp.StatusCode,
-				Message:    truncateBody(string(body)),
+				Message:    string(body),
 			}
 			if retryAfter, ok := parseRetryAfter(resp.Header.Get("Retry-After")); ok {
 				err.RetryAfter = retryAfter
@@ -134,10 +126,10 @@ func (e *OpenAIExtractor) callAPI(ctx context.Context, prompt string, maxTokens 
 }
 
 // Classify sends a classification prompt to the OpenAI-compatible API and returns the meeting type key.
-func (e *OpenAIExtractor) Classify(ctx context.Context, transcriptPreview string, templateKeys []string, classifyPrompt string) (string, error) {
+func (e *OpenAIExtractor) Classify(transcriptPreview string, templateKeys []string, classifyPrompt string) (string, error) {
 	prompt := buildClassifyPrompt(classifyPrompt, transcriptPreview, templateKeys)
 
-	text, err := e.callAPI(ctx, prompt, 32)
+	text, err := e.callAPI(prompt, 32)
 	if err != nil {
 		return "", fmt.Errorf("openai classification failed: %w", err)
 	}
@@ -147,10 +139,10 @@ func (e *OpenAIExtractor) Classify(ctx context.Context, transcriptPreview string
 
 // Extract sends the transcript with the given extraction prompt to the OpenAI-compatible
 // API and returns the raw cleaned text (markdown with YAML front-matter).
-func (e *OpenAIExtractor) Extract(ctx context.Context, transcript string, extractionPrompt string) (string, error) {
+func (e *OpenAIExtractor) Extract(transcript string, extractionPrompt string) (string, error) {
 	prompt := buildExtractionPrompt(extractionPrompt, transcript)
 
-	text, err := e.callAPI(ctx, prompt, 4096)
+	text, err := e.callAPI(prompt, 4096)
 	if err != nil {
 		return "", fmt.Errorf("openai extraction failed: %w", err)
 	}

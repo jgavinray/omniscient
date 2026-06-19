@@ -1,6 +1,6 @@
 # Build artifacts
 bin/
-/omniscient
+omniscient
 
 # IDE
 .idea/

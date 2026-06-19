@@ -68,7 +68,7 @@ func baseValidConfig() Config {
 		Google: GoogleConfig{
 			CredentialsFile: "/opt/omniscient/credentials.json",
 			TokenFile:       "/opt/omniscient/token.json",
-			FolderID:        "1aBcDeFgHiJkLmN",
+			FolderID:        "abc123",
 		},
 		LLM: LLMConfig{
 			Provider:      "openai-compatible",
@@ -406,7 +406,6 @@ func TestValidate_Defaults(t *testing.T) {
 	cfg.Sync.MaxPerRun = 0
 	cfg.Logging.Level = ""
 
-	cfg.applyDefaults()
 	err := cfg.validate()
 	if err != nil {
 		t.Fatalf("validate() returned unexpected error: %v", err)

@@ -2,11 +2,8 @@ package config
 
 import (
 	"fmt"
-	"io"
 	"net/url"
 	"os"
-	"path/filepath"
-	"regexp"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -134,26 +131,15 @@ var driveIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_\-]{10,}$`)
 // Load reads a YAML configuration file from the given path, unmarshals it into
 // a Config struct, applies defaults, and validates all required fields.
 func Load(path string) (*Config, error) {
-	const maxConfigBytes = 1 * 1024 * 1024 // 1 MB
-	f, err := os.Open(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("reading config file %s: %w", path, err)
-	}
-	defer f.Close()
-	data, err := io.ReadAll(io.LimitReader(f, maxConfigBytes))
-	if err != nil {
-		return nil, fmt.Errorf("reading config file %s: %w", path, err)
-	}
-	if int64(len(data)) >= maxConfigBytes {
-		return nil, fmt.Errorf("config file %s exceeds %d byte limit", path, maxConfigBytes)
 	}
 
 	var cfg Config
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parsing config file %s: %w", path, err)
 	}
-
-	cfg.applyDefaults()
 
 	if err := cfg.validate(); err != nil {
 		return nil, fmt.Errorf("validating config: %w", err)
@@ -162,43 +148,18 @@ func Load(path string) (*Config, error) {
 	return &cfg, nil
 }
 
-// applyDefaults sets default values for optional fields that were not specified.
-func (c *Config) applyDefaults() {
-	if c.LLM.Timeout == 0 {
-		c.LLM.Timeout = 120
-	}
-	if c.Sync.LookbackHours == 0 {
-		c.Sync.LookbackHours = 24
-	}
-	if c.Sync.MaxPerRun == 0 {
-		c.Sync.MaxPerRun = 50
-	}
-	if c.Logging.Level == "" {
-		c.Logging.Level = "info"
-	}
-	if c.Prompts.ClassifyPrompt == "" {
-		c.Prompts.ClassifyPrompt = defaultClassifyPrompt
-	}
-	if len(c.Prompts.Templates) == 0 {
-		c.Prompts.Templates = defaultTemplates()
-	}
-}
-
-// validate checks all required fields and returns a descriptive error for the
-// first validation failure encountered. Defaults must be applied before calling.
+// validate checks all required fields, applies defaults for optional fields,
+// and returns a descriptive error for the first validation failure encountered.
 func (c *Config) validate() error {
 	// Google config validation.
-	if err := validateFilePath("google.credentials_file", c.Google.CredentialsFile); err != nil {
-		return err
+	if c.Google.CredentialsFile == "" {
+		return fmt.Errorf("google.credentials_file must not be empty")
 	}
-	if err := validateFilePath("google.token_file", c.Google.TokenFile); err != nil {
-		return err
+	if c.Google.TokenFile == "" {
+		return fmt.Errorf("google.token_file must not be empty")
 	}
 	if c.Google.FolderID == "" {
 		return fmt.Errorf("google.folder_id must not be empty")
-	}
-	if !driveIDPattern.MatchString(c.Google.FolderID) {
-		return fmt.Errorf("google.folder_id contains unexpected characters; expected an alphanumeric Google Drive ID")
 	}
 
 	// LLM config validation.
@@ -214,8 +175,8 @@ func (c *Config) validate() error {
 		if c.LLM.OpenAIBaseURL == "" {
 			return fmt.Errorf("llm.openai_base_url is required when provider is openai-compatible")
 		}
-		if err := validateURL("llm.openai_base_url", c.LLM.OpenAIBaseURL, []string{"http", "https"}); err != nil {
-			return err
+		if _, err := url.ParseRequestURI(c.LLM.OpenAIBaseURL); err != nil {
+			return fmt.Errorf("llm.openai_base_url is not a valid URL: %w", err)
 		}
 	default:
 		return fmt.Errorf("llm.provider must be \"anthropic\" or \"openai-compatible\", got %q", c.LLM.Provider)
@@ -224,14 +185,17 @@ func (c *Config) validate() error {
 	if c.LLM.Model == "" {
 		return fmt.Errorf("llm.model must not be empty")
 	}
+	if c.LLM.Timeout == 0 {
+		c.LLM.Timeout = 120
+	}
 
 	// Confluence config validation (skip when disabled).
 	if c.Confluence.IsEnabled() {
 		if c.Confluence.BaseURL == "" {
 			return fmt.Errorf("confluence.base_url must not be empty")
 		}
-		if err := validateURL("confluence.base_url", c.Confluence.BaseURL, []string{"https"}); err != nil {
-			return err
+		if _, err := url.ParseRequestURI(c.Confluence.BaseURL); err != nil {
+			return fmt.Errorf("confluence.base_url is not a valid URL: %w", err)
 		}
 		if err := validateConfluencePath(c.Confluence.BaseURL); err != nil {
 			return err
@@ -248,17 +212,26 @@ func (c *Config) validate() error {
 	}
 
 	// Sync config validation.
+	if c.Sync.LookbackHours == 0 {
+		c.Sync.LookbackHours = 24
+	}
 	if c.Sync.LookbackHours < 0 {
 		return fmt.Errorf("sync.lookback_hours must be > 0, got %d", c.Sync.LookbackHours)
 	}
 	if c.Sync.DatabasePath == "" {
 		return fmt.Errorf("sync.database_path must not be empty")
 	}
+	if c.Sync.MaxPerRun == 0 {
+		c.Sync.MaxPerRun = 50
+	}
 	if c.Sync.MaxPerRun < 0 {
 		return fmt.Errorf("sync.max_per_run must be > 0, got %d", c.Sync.MaxPerRun)
 	}
 
 	// Logging config validation.
+	if c.Logging.Level == "" {
+		c.Logging.Level = "info"
+	}
 	validLevels := map[string]bool{
 		"debug": true,
 		"info":  true,

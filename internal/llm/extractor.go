@@ -1,7 +1,6 @@
 package llm
 
 import (
-	"context"
 	"fmt"
 	"time"
 
@@ -11,8 +10,8 @@ import (
 // Extractor defines the interface for LLM-based transcript processing.
 // Classify picks a meeting type; Extract runs the extraction prompt and returns raw text.
 type Extractor interface {
-	Classify(ctx context.Context, transcriptPreview string, templateKeys []string, classifyPrompt string) (string, error)
-	Extract(ctx context.Context, transcript string, extractionPrompt string) (string, error)
+	Classify(transcriptPreview string, templateKeys []string, classifyPrompt string) (string, error)
+	Extract(transcript string, extractionPrompt string) (string, error)
 }
 
 // NewExtractor creates the appropriate Extractor implementation based on the
