@@ -1,0 +1,163 @@
+{
+  "goal": "Omniscient pipeline (Drive -> LLM -> Confluence, SQLite dedup) is correct, safe, and reliable with consistent three-tier error handling.",
+  "mode": "dry-run",
+  "totalRounds": 1,
+  "findingsByRound": [14],
+  "converged": true,
+  "stoppedReason": "single-round solo review complete (subagent infrastructure unavailable)",
+  "summary": {
+    "totalFindings": 14,
+    "critical": 0,
+    "high": 1,
+    "medium": 6,
+    "low": 7,
+    "byDimension": {
+      "correctness": 5,
+      "error-handling": 2,
+      "security": 1,
+      "reliability": 6
+    }
+  },
+  "findings": [
+    {
+      "dimension": "correctness",
+      "file": "internal/confluence/publisher.go",
+      "line": 105,
+      "severity": "high",
+      "summary": "Malformed Confluence URL when _links.webui is an absolute URL (Confluence Cloud)",
+      "failure_scenario": "Confluence Cloud API returns absolute URLs for _links.webui. pageURL := c.baseURL + pageRes.Links.WebUI produces a doubly-protocol-prefixed invalid URL stored in DB and logged to user. Pipeline 'succeeds' silently. Test at publisher_test.go:32 uses relative path, masking the bug.",
+      "suggested_fix": "Check if WebUI starts with 'http'; if so, use it directly; otherwise prefix with c.baseURL.",
+      "is_atomic": true
+    },
+    {
+      "dimension": "security",
+      "file": "internal/drive/oauth.go",
+      "line": 89,
+      "severity": "medium",
+      "summary": "OAuth2 state parameter generated but never validated in callback handler",
+      "failure_scenario": "AuthCodeURL generates state but /callback handler (lines 96-110) never checks it. A malicious local web page can issue fetch to localhost:8085/callback?code=ATTACKER_CODE. The CLI stores the attacker's token and reads the attacker's Drive.",
+      "suggested_fix": "Generate a random per-flow state, store it in a variable, and verify it in the callback handler before accepting the code. Reject the callback on state mismatch.",
+      "is_atomic": true
+    },
+    {
+      "dimension": "reliability",
+      "file": "internal/drive/client.go",
+      "line": 53,
+      "severity": "medium",
+      "summary": "No timeout or retry on Drive API calls; hung connection blocks sync indefinitely",
+      "failure_scenario": "drive.NewService(context.Background()) and call.Do()/Export().Download() have no context deadline and no retry wrapper. A hung HTTP connection blocks the entire sync. Transient 429/5xx from Drive API are not retried, inconsistent with LLM and Confluence retry tiers.",
+      "suggested_fix": "Use context.WithTimeout for the Drive service and wrap call.Do() and Export().Download() in retry.Do.",
+      "is_atomic": true
+    },
+    {
+      "dimension": "error-handling",
+      "file": "internal/retry/retry.go",
+      "line": 35,
+      "severity": "medium",
+      "summary": "IsTransient only matches *HTTPError; network errors (timeouts, DNS, connection reset) are not retried",
+      "failure_scenario": "CLAUDE.md lists 'network timeouts' as transient/retry, but IsTransient only checks *HTTPError with 429/5xx. Pure network errors fail immediately without retry at call sites in anthropic.go, openai.go, and publisher.go.",
+      "suggested_fix": "Extend IsTransient to also return true for net.Error with Timeout()==true and for context.DeadlineExceeded.",
+      "is_atomic": true
+    },
+    {
+      "dimension": "reliability",
+      "file": "cmd/omniscient/sync.go",
+      "line": 47,
+      "severity": "medium",
+      "summary": "No inter-process lock; overlapping cron runs can produce duplicate Confluence pages",
+      "failure_scenario": "Cron fires every 30 min. If a run takes >30 min or hangs, the next invocation overlaps. Both processes see IsProcessed=false, both publish to Confluence, producing duplicate pages or version conflicts.",
+      "suggested_fix": "Add a file-based advisory lock (flock) or a DB-level lock before the pipeline loop. Hold the lock for the duration of the run.",
+      "is_atomic": false
+    },
+    {
+      "dimension": "reliability",
+      "file": "cmd/omniscient/sync.go",
+      "line": 149,
+      "severity": "medium",
+      "summary": "Confluence-disabled transcripts marked permanently processed with URL 'confluence-disabled'",
+      "failure_scenario": "When confluenceClient is nil, the transcript is marked processed with confluence_url='confluence-disabled' (line 163-164). If the user later enables Confluence, these transcripts are skipped forever due to dedup by transcript_id.",
+      "suggested_fix": "Either skip MarkProcessed when Confluence is disabled, or use a distinct status/key that allows re-processing when Confluence becomes enabled.",
+      "is_atomic": true
+    },
+    {
+      "dimension": "reliability",
+      "file": "cmd/omniscient/sync.go",
+      "line": 168,
+      "severity": "medium",
+      "summary": "MarkProcessed failure logged but successCount still incremented; transcript reprocessed on next run",
+      "failure_scenario": "slog.Error is called on MarkProcessed failure but successCount is still incremented. The transcript is not in the DB, so the next run re-processes it, risking duplicate Confluence page (mitigated by title-based dedup but with concurrent update races).",
+      "suggested_fix": "Don't increment successCount on MarkProcessed failure. Optionally retry the DB write before giving up.",
+      "is_atomic": true
+    },
+    {
+      "dimension": "correctness",
+      "file": "cmd/omniscient/sync.go",
+      "line": 112,
+      "severity": "low",
+      "summary": "Byte-based preview[:1000] truncation may split a multi-byte UTF-8 character",
+      "failure_scenario": "If a 2-4 byte UTF-8 character straddles byte position 1000, the preview contains an invalid UTF-8 sequence. The LLM may reject the prompt or produce degraded classification.",
+      "suggested_fix": "Use rune-aware truncation (e.g., strings.ToValidUTF8 or iterate runes up to 1000 bytes).",
+      "is_atomic": true
+    },
+    {
+      "dimension": "reliability",
+      "file": "cmd/omniscient/main.go",
+      "line": 49,
+      "severity": "low",
+      "summary": "logging.file config option silently ignored; setupLogging always writes to os.Stdout",
+      "failure_scenario": "User configures logging.file in config.yaml expecting file-based logging, but all logs go to stdout. Misleading configuration surface.",
+      "suggested_fix": "Honor cfg.Logging.File in setupLogging, or remove the field from the config schema if intentionally unsupported.",
+      "is_atomic": true
+    },
+    {
+      "dimension": "correctness",
+      "file": "internal/retry/retry.go",
+      "line": 14,
+      "severity": "low",
+      "summary": "TruncateBody byte-slice body[:512] may split a multi-byte UTF-8 character in error messages",
+      "failure_scenario": "If byte 512 falls in the middle of a multi-byte UTF-8 character, the truncated error message contains an invalid UTF-8 sequence. Cosmetic issue in log output.",
+      "suggested_fix": "Use rune-aware truncation or strings.ToValidUTF8 after slicing.",
+      "is_atomic": true
+    },
+    {
+      "dimension": "error-handling",
+      "file": "internal/llm/anthropic.go",
+      "line": 126,
+      "severity": "low",
+      "summary": "Empty content with HTTP 200 treated as permanent error; no retry on transient provider glitch",
+      "failure_scenario": "If the LLM returns 200 OK but with empty content array (anthropic.go:126-128) or empty choices (openai.go:123-125), the error is a plain fmt.Errorf, not transient, so no retry occurs. A transient provider glitch fails the transcript immediately.",
+      "suggested_fix": "Wrap the empty-content error in retry.HTTPError or add a custom transient classification for empty 200 responses so they are retried.",
+      "is_atomic": true
+    },
+    {
+      "dimension": "reliability",
+      "file": "internal/retry/retry.go",
+      "line": 46,
+      "severity": "low",
+      "summary": "No dedicated unit tests for retry.Do (backoff timing, attempt counting, exhaustion)",
+      "failure_scenario": "util_test.go tests IsTransient but not the Do loop itself. A regression in backoff timing or attempt counting would not be caught by the test suite.",
+      "suggested_fix": "Add retry_test.go with tests: success on first attempt, success after retries, exhaustion returns wrapped error, non-transient error returns immediately without retry.",
+      "is_atomic": true
+    },
+    {
+      "dimension": "correctness",
+      "file": "internal/confluence/publisher.go",
+      "line": 113,
+      "severity": "low",
+      "summary": "Title collision risk: two meetings with the same name and date overwrite each other",
+      "failure_scenario": "findPage matches on exact title (transcript name + date). Two meetings with the same name on the same date will collide; the second overwrites the first via updatePage.",
+      "suggested_fix": "Include the transcript ID or a short hash in the page title to guarantee uniqueness.",
+      "is_atomic": true
+    },
+    {
+      "dimension": "correctness",
+      "file": "internal/config/config.go",
+      "line": 124,
+      "severity": "low",
+      "summary": "Hardcoded Anthropic key prefix validation is brittle",
+      "failure_scenario": "strings.HasPrefix(key, 'sk-ant-') rejects valid keys if Anthropic ever changes the key format, producing a 'config error' for a working key.",
+      "suggested_fix": "Relax to a non-empty check, or make the expected prefix configurable.",
+      "is_atomic": true
+    }
+  ]
+}
