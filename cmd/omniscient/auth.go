@@ -19,7 +19,7 @@ func newAuthCmd() *cobra.Command {
 				return fmt.Errorf("loading config: %w", err)
 			}
 
-			setupLogging(cfg.Logging.Level)
+			setupLogging(cfg.Logging.Level, cfg.Logging.File)
 
 			slog.Info("starting Google OAuth2 authentication flow")
 

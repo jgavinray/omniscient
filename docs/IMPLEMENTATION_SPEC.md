@@ -42,6 +42,16 @@ Confluence (formatted pages)
 
 State tracking: SQLite database (deduplication)
 
+Multi-Sink Publishing (post-spec addition):
+Step (3) Publish routes to all ENABLED sinks in `internal/publish/`:
+Confluence (update-or-create by title), Slack incoming-webhook (disabled by
+default), and local markdown (enabled by default, one `<date>_<name>.md` per
+transcript, atomic write). `omniscient sync --interactive` presents each
+extracted summary in the terminal and prompts per transcript (all / skip /
+pick sinks); without the flag, every summary routes to all enabled sinks
+(cron-safe). The tracking column was migrated from `confluence_url` to
+`sink_results` (JSON array of {sink, ref}).
+
 ───
 
 Technical Stack

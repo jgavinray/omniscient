@@ -2,6 +2,7 @@ package llm
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -26,6 +27,9 @@ func NewAnthropicExtractor(apiKey, model string, timeout time.Duration) *Anthrop
 		model:  model,
 		httpClient: &http.Client{
 			Timeout: timeout,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				return fmt.Errorf("unexpected redirect to %s", req.URL)
+			},
 		},
 		baseURL: "https://api.anthropic.com",
 	}
@@ -52,7 +56,7 @@ type anthropicResponse struct {
 }
 
 // callAPI sends a prompt to the Anthropic API and returns the response text.
-func (e *AnthropicExtractor) callAPI(prompt string, maxTokens int) (string, error) {
+func (e *AnthropicExtractor) callAPI(ctx context.Context, prompt string, maxTokens int) (string, error) {
 	reqBody := anthropicRequest{
 		Model:     e.model,
 		MaxTokens: maxTokens,
@@ -84,15 +88,19 @@ func (e *AnthropicExtractor) callAPI(prompt string, maxTokens int) (string, erro
 		}
 		defer resp.Body.Close()
 
-		body, err := io.ReadAll(resp.Body)
+		const maxResponseBytes = 10 * 1024 * 1024 // 10 MB
+		body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 		if err != nil {
 			return fmt.Errorf("reading anthropic response body: %w", err)
+		}
+		if int64(len(body)) >= maxResponseBytes {
+			return fmt.Errorf("anthropic response exceeded %d byte limit", maxResponseBytes)
 		}
 
 		if resp.StatusCode != http.StatusOK {
 			err := &httpError{
 				StatusCode: resp.StatusCode,
-				Message:    string(body),
+				Message:    truncateBody(string(body)),
 			}
 			if retryAfter, ok := parseRetryAfter(resp.Header.Get("Retry-After")); ok {
 				err.RetryAfter = retryAfter
@@ -121,10 +129,10 @@ func (e *AnthropicExtractor) callAPI(prompt string, maxTokens int) (string, erro
 }
 
 // Classify sends a classification prompt to Anthropic and returns the meeting type key.
-func (e *AnthropicExtractor) Classify(transcriptPreview string, templateKeys []string, classifyPrompt string) (string, error) {
+func (e *AnthropicExtractor) Classify(ctx context.Context, transcriptPreview string, templateKeys []string, classifyPrompt string) (string, error) {
 	prompt := buildClassifyPrompt(classifyPrompt, transcriptPreview, templateKeys)
 
-	text, err := e.callAPI(prompt, 32)
+	text, err := e.callAPI(ctx, prompt, 32)
 	if err != nil {
 		return "", fmt.Errorf("anthropic classification failed: %w", err)
 	}
@@ -134,10 +142,10 @@ func (e *AnthropicExtractor) Classify(transcriptPreview string, templateKeys []s
 
 // Extract sends the transcript with the given extraction prompt to Anthropic
 // and returns the raw cleaned text (markdown with YAML front-matter).
-func (e *AnthropicExtractor) Extract(transcript string, extractionPrompt string) (string, error) {
+func (e *AnthropicExtractor) Extract(ctx context.Context, transcript string, extractionPrompt string) (string, error) {
 	prompt := buildExtractionPrompt(extractionPrompt, transcript)
 
-	text, err := e.callAPI(prompt, 4096)
+	text, err := e.callAPI(ctx, prompt, 4096)
 	if err != nil {
 		return "", fmt.Errorf("anthropic extraction failed: %w", err)
 	}

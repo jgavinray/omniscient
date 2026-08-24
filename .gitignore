@@ -1,6 +1,10 @@
 # Build artifacts
 bin/
-omniscient
+/omniscient
+
+# Local Go build caches (sandbox builds use in-repo caches)
+.gocache/
+.gomodcache/
 
 # IDE
 .idea/

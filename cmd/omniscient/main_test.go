@@ -44,6 +44,8 @@ Quick standup covering progress on Omniscient project.
 // services mocked: LLM classification/extraction and Confluence publishing.
 // Google Drive is simulated by constructing Transcript structs directly.
 func TestIntegration_FullPipeline(t *testing.T) {
+	ctx := context.Background()
+
 	// --- Mock LLM server (OpenAI-compatible format) ---
 	var llmCalls atomic.Int32
 	llmServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -146,7 +148,7 @@ func TestIntegration_FullPipeline(t *testing.T) {
 	successCount := 0
 
 	for _, transcript := range transcripts {
-		processed, err := store.IsProcessed(transcript.ID)
+		processed, err := store.IsProcessed(ctx, transcript.ID)
 		if err != nil {
 			t.Errorf("check processed: %v", err)
 			continue
@@ -160,7 +162,7 @@ func TestIntegration_FullPipeline(t *testing.T) {
 		if len(preview) > 1000 {
 			preview = preview[:1000]
 		}
-		meetingType, err := extractor.Classify(preview, templateKeys, classifyPrompt)
+		meetingType, err := extractor.Classify(ctx, preview, templateKeys, classifyPrompt)
 		if err != nil {
 			t.Errorf("classify failed for %s: %v", transcript.ID, err)
 			continue
@@ -172,7 +174,7 @@ func TestIntegration_FullPipeline(t *testing.T) {
 		}
 
 		// Extract.
-		rawOutput, err := extractor.Extract(transcript.Content, tmpl.ExtractionPrompt)
+		rawOutput, err := extractor.Extract(ctx, transcript.Content, tmpl.ExtractionPrompt)
 		if err != nil {
 			t.Errorf("extraction failed for %s: %v", transcript.ID, err)
 			continue
@@ -186,13 +188,13 @@ func TestIntegration_FullPipeline(t *testing.T) {
 		}
 
 		// Publish.
-		confluenceURL, err := confClient.PublishMarkdown(spaceKey, parentPageID, result, transcript.Name)
+		confluenceURL, err := confClient.PublishMarkdown(ctx, spaceKey, parentPageID, result, transcript.Name)
 		if err != nil {
 			t.Errorf("publish failed for %s: %v", transcript.ID, err)
 			continue
 		}
 
-		if err := store.MarkProcessed(transcript.ID, transcript.Name, confluenceURL); err != nil {
+		if err := store.MarkProcessed(ctx, transcript.ID, transcript.Name, confluenceURL); err != nil {
 			t.Errorf("mark processed failed for %s: %v", transcript.ID, err)
 		}
 
@@ -216,7 +218,7 @@ func TestIntegration_FullPipeline(t *testing.T) {
 
 	// Verify both are now marked as processed.
 	for _, transcript := range transcripts {
-		processed, err := store.IsProcessed(transcript.ID)
+		processed, err := store.IsProcessed(ctx, transcript.ID)
 		if err != nil {
 			t.Errorf("check processed after: %v", err)
 		}
@@ -228,7 +230,7 @@ func TestIntegration_FullPipeline(t *testing.T) {
 	// --- Run pipeline again — should skip both ---
 	secondRunSuccess := 0
 	for _, transcript := range transcripts {
-		processed, _ := store.IsProcessed(transcript.ID)
+		processed, _ := store.IsProcessed(ctx, transcript.ID)
 		if !processed {
 			secondRunSuccess++
 		}
