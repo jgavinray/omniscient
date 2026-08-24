@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -152,7 +153,14 @@ func TestOpenAIExtract_PermanentError(t *testing.T) {
 }
 
 func TestOpenAIClassify_Success(t *testing.T) {
+	var gotMaxTokens int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var reqBody openaiRequest
+		if err := json.Unmarshal(body, &reqBody); err != nil {
+			t.Errorf("decoding request body: %v", err)
+		}
+		gotMaxTokens = reqBody.MaxTokens
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, openaiSuccessResponse("planning"))
 	}))
@@ -167,6 +175,9 @@ func TestOpenAIClassify_Success(t *testing.T) {
 
 	if result != "planning" {
 		t.Errorf("expected %q, got %q", "planning", result)
+	}
+	if gotMaxTokens != classifyMaxTokens {
+		t.Errorf("expected classify max_tokens=%d, got %d", classifyMaxTokens, gotMaxTokens)
 	}
 }
 

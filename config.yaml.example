@@ -28,9 +28,10 @@ llm:
   #   192.168.0.43:8000 -> sglang, serves "qwen3.8-27b" (default below)
   #   192.168.0.43:8001 -> vLLM, serves "qwen38" (non-thinking)
   #   192.168.0.33:8888 -> vLLM, serves "deepseek-v4-flash-dspark"
-  # Caveat: "qwen3.8-27b" is a thinking model — with the 32-token Classify
-  # budget its reply can come back empty (all tokens spent on reasoning).
-  # Switch openai_base_url/model to the 8001 pair above if that bites.
+  # Note: "qwen3.8-27b" is a thinking model — it spends tokens reasoning
+  # before answering, so the Classify call requests an 8k-token budget so
+  # the reply cannot come back empty. The 8001 pair above is a non-thinking
+  # alternative if you want faster classifications.
   openai_base_url: "http://192.168.0.43:8000/v1"
   # API key (optional for local endpoints, required for OpenAI)
   openai_api_key: "local"

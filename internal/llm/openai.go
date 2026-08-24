@@ -133,11 +133,20 @@ func (e *OpenAIExtractor) callAPI(ctx context.Context, prompt string, maxTokens 
 	return responseText, nil
 }
 
+// classifyMaxTokens is the output budget for the one-word Classify call.
+// It is deliberately far larger than the reply: thinking models (e.g.
+// qwen3.8-27b served by sglang) spend most of the budget on reasoning
+// tokens before emitting the answer — at 32 tokens the reply came back
+// empty. The budget is a cap, not a target: the model stops reasoning on
+// its own (a classify prompt used ~60 reasoning tokens), so the usual
+// call still costs a few tokens, not 8k.
+const classifyMaxTokens = 8192
+
 // Classify sends a classification prompt to the OpenAI-compatible API and returns the meeting type key.
 func (e *OpenAIExtractor) Classify(ctx context.Context, transcriptPreview string, templateKeys []string, classifyPrompt string) (string, error) {
 	prompt := buildClassifyPrompt(classifyPrompt, transcriptPreview, templateKeys)
 
-	text, err := e.callAPI(ctx, prompt, 32)
+	text, err := e.callAPI(ctx, prompt, classifyMaxTokens)
 	if err != nil {
 		return "", fmt.Errorf("openai classification failed: %w", err)
 	}
