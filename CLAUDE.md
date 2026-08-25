@@ -1,7 +1,7 @@
 # Omniscient Project Context
 
 ## What This Is
-Meeting transcript harvester: Google Drive → LLM extraction → Confluence
+Meeting transcript harvester: Google Drive → LLM extraction → multi-sink publish (Confluence, Slack, local markdown)
 
 ## Module
 `github.com/jgavinray/omniscient`
@@ -36,6 +36,8 @@ omniscient sync
 - **Config via YAML only**: `/opt/omniscient/config.yaml` — no environment variable overrides
 - **Structured logging**: `slog` throughout
 - **Retry transient errors**: 429, 5xx with exponential backoff (3 attempts)
+- **Multi-sink publishing** (`internal/publish/`): Confluence (update-or-create by title), Slack incoming-webhook (off by default), local markdown (on by default, one `<date>_<name>.md` per transcript, atomic temp-file + rename). Each approved summary routes to ALL enabled sinks; opt out per sink via config
+- **`omniscient sync --interactive`**: shows each extracted summary in the terminal and prompts per transcript (approve all / skip / pick sinks by number); without the flag it's fully automatic (cron-safe)
 
 ## Error Handling
 Three categories:
@@ -64,7 +66,7 @@ See `docs/IMPLEMENTATION_SPEC.md` for full details
 ## Scope Boundaries (Out of Scope)
 - No web UI or REST API
 - No real-time processing (batch only)
-- No Slack/email notifications
+- No email notifications (the Slack incoming-webhook sink IS in scope)
 - No Jira integration
 - No multi-tenant support
 - No environment variable config overrides

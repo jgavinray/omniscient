@@ -667,3 +667,80 @@ func TestValidate_ZeroTemplates(t *testing.T) {
 		t.Errorf("error = %q, want it to mention %q", err.Error(), "at least one entry")
 	}
 }
+func TestValidate_SlackEnabledRequiresWebhook(t *testing.T) {
+	cfg := baseValidConfig()
+	enabled := true
+	cfg.Slack.Enabled = &enabled
+
+	err := cfg.validate()
+	if err == nil {
+		t.Fatal("validate() expected error for enabled slack without webhook_url, got nil")
+	}
+	if !strings.Contains(err.Error(), "slack.webhook_url") {
+		t.Errorf("error = %q, want it to mention slack.webhook_url", err.Error())
+	}
+}
+
+func TestValidate_SlackBadWebhookURL(t *testing.T) {
+	cfg := baseValidConfig()
+	enabled := true
+	cfg.Slack.Enabled = &enabled
+	cfg.Slack.WebhookURL = "https://example.com/hooks/abc"
+
+	err := cfg.validate()
+	if err == nil {
+		t.Fatal("validate() expected error for non-slack webhook URL, got nil")
+	}
+	if !strings.Contains(err.Error(), "hooks.slack.com") {
+		t.Errorf("error = %q, want it to mention hooks.slack.com", err.Error())
+	}
+}
+
+func TestValidate_SlackValidWebhookPasses(t *testing.T) {
+	cfg := baseValidConfig()
+	enabled := true
+	cfg.Slack.Enabled = &enabled
+	cfg.Slack.WebhookURL = "https://hooks.slack.com/services/XXXX/YYYY/ZZZZ"
+
+	if err := cfg.validate(); err != nil {
+		t.Fatalf("validate() returned unexpected error: %v", err)
+	}
+}
+
+func TestValidate_LocalOutputDirDefault(t *testing.T) {
+	cfg := baseValidConfig()
+	if err := cfg.validate(); err != nil {
+		t.Fatalf("validate() returned unexpected error: %v", err)
+	}
+	if cfg.Local.OutputDir != "./transcripts" {
+		t.Errorf("Local.OutputDir = %q, want default %q", cfg.Local.OutputDir, "./transcripts")
+	}
+}
+
+func TestValidate_NoSinksEnabledFails(t *testing.T) {
+	cfg := baseValidConfig()
+	off := false
+	cfg.Confluence.Enabled = &off
+	cfg.Local.Enabled = &off
+	// Slack.Enabled stays nil → disabled by default.
+
+	err := cfg.validate()
+	if err == nil {
+		t.Fatal("validate() expected error when no sinks are enabled, got nil")
+	}
+	if !strings.Contains(err.Error(), "at least one sink") {
+		t.Errorf("error = %q, want it to mention at least one sink", err.Error())
+	}
+}
+
+func TestValidate_NoSinksEnabledDryRunOK(t *testing.T) {
+	cfg := baseValidConfig()
+	off := false
+	cfg.Confluence.Enabled = &off
+	cfg.Local.Enabled = &off
+	cfg.DryRun = true
+
+	if err := cfg.validate(); err != nil {
+		t.Fatalf("validate() with dry_run=true and no sinks: %v", err)
+	}
+}

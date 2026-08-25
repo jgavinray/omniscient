@@ -1,0 +1,27 @@
+goal: >-
+  Omniscient pipeline (Drive -> LLM -> Confluence, SQLite dedup) is correct,
+  safe, and reliable: correct HTTP/auth/retry handling, consistent 3-tier
+  error classification (transient-retry / permanent-fail /
+  recoverable-continue), no dedup or data-loss bugs, all changes validated
+  by build + vet + test.
+language: en
+dimensions:
+  - correctness
+  - error-handling
+  - security
+  - reliability
+max_rounds: 3
+atomic:
+  max_lines: 20
+validation:
+  commands:
+    - GOCACHE=/Users/jgavinray/dev/omniscient/.gocache GOMODCACHE=/Users/jgavinray/dev/omniscient/.gomodcache go build ./...
+    - GOCACHE=/Users/jgavinray/dev/omniscient/.gocache GOMODCACHE=/Users/jgavinray/dev/omniscient/.gomodcache go vet ./...
+    - GOCACHE=/Users/jgavinray/dev/omniscient/.gocache GOMODCACHE=/Users/jgavinray/dev/omniscient/.gomodcache go test ./...
+exclude:
+  - .claude/**
+  - .gocache/**
+  - .gomodcache/**
+  - .idea/**
+  - bin/**
+  - .iterate/**

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/jgavinray/omniscient/internal/retry"
 )
 
 // withImmediateRetries replaces retryableCtx with an immediate (no-sleep)
@@ -110,29 +112,29 @@ func TestBuildExtractionPrompt(t *testing.T) {
 }
 
 func TestIsTransient_429(t *testing.T) {
-	err := &httpError{StatusCode: 429, Message: "rate limited"}
-	if !isTransient(err) {
+	err := &retry.HTTPError{StatusCode: 429, Message: "rate limited"}
+	if !retry.IsTransient(err) {
 		t.Error("expected 429 to be transient")
 	}
 }
 
 func TestIsTransient_500(t *testing.T) {
-	err := &httpError{StatusCode: 500, Message: "internal server error"}
-	if !isTransient(err) {
+	err := &retry.HTTPError{StatusCode: 500, Message: "internal server error"}
+	if !retry.IsTransient(err) {
 		t.Error("expected 500 to be transient")
 	}
 }
 
 func TestIsTransient_401(t *testing.T) {
-	err := &httpError{StatusCode: 401, Message: "unauthorized"}
-	if isTransient(err) {
+	err := &retry.HTTPError{StatusCode: 401, Message: "unauthorized"}
+	if retry.IsTransient(err) {
 		t.Error("expected 401 to NOT be transient")
 	}
 }
 
 func TestIsTransient_NonHTTPError(t *testing.T) {
 	err := fmt.Errorf("some non-HTTP error")
-	if isTransient(err) {
+	if retry.IsTransient(err) {
 		t.Error("expected non-HTTP error to NOT be transient")
 	}
 }

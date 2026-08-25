@@ -1,0 +1,311 @@
+{
+ "goal": "Omniscient pipeline (Drive -> LLM -> Confluence, SQLite dedup) is correct, safe, and reliable: correct HTTP/auth/retry handling, consistent 3-tier error classification (transient-retry / permanent-fail / recoverable-continue), no dedup or data-loss bugs, all changes validated by build + vet + test.",
+ "maxReviewRounds": 3,
+ "knownIntentional": [],
+ "dimensions": [
+  {
+   "id": "correctness",
+   "reviewerPrompt": "You are the \"correctness\" reviewer for the iterate review.\nGoal: Omniscient pipeline (Drive -> LLM -> Confluence, SQLite dedup) is correct, safe, and reliable: correct HTTP/auth/retry handling, consistent 3-tier error classification (transient-retry / permanent-fail / recoverable-continue), no dedup or data-loss bugs, all changes validated by build + vet + test.\nScope: entire codebase.\nCOVERAGE RULE (mandatory): below is the exact file inventory you are assigned to review. You MUST open EVERY file in this inventory with the read_file tool before judging it \u2014 do not skip, skim-declare, or assume any file without reading it. Files you did not actually open are considered un-reviewed and will lower your coverage score. Return a `readFiles` array listing every file you actually opened.\nAssigned file inventory:\n- cmd/omniscient/auth.go\n- cmd/omniscient/config.go\n- cmd/omniscient/main.go\n- cmd/omniscient/main_test.go\n- cmd/omniscient/sync.go\n- internal/config/config.go\n- internal/config/config_test.go\n- internal/confluence/publisher.go\n- internal/confluence/publisher_test.go\n- internal/database/store.go\n- internal/database/store_test.go\n- internal/drive/client.go\n- internal/drive/client_test.go\n- internal/drive/oauth.go\n- internal/llm/anthropic.go\n- internal/llm/anthropic_test.go\n- internal/llm/extractor.go\n- internal/llm/extractor_test.go\n- internal/llm/openai.go\n- internal/llm/openai_test.go\n- internal/llm/util.go\n- internal/llm/util_test.go\n- internal/models/transcript.go\n- internal/models/transcript_test.go\n- internal/retry/retry.go\n- internal/retry/retry_test.go\nThis is round 1 \u2014 report every issue you find in this dimension.\nEVIDENCE RULE (mandatory): read every file you report on with the read_file tool BEFORE judging it. NEVER report a location you did not actually read \u2014 speculation about code you never inspected is a disqualifying failure, and fabricated line numbers are treated as poisoned evidence. Anchor every finding to real code.\nReturn a JSON object: {\"findings\": [...], \"readFiles\": [...]}.\nEach finding: dimension (must be \"correctness\"), file (relative path), line (optional; the exact line you READ for a line-targeted issue; 0 or omitted for whole-file/module-level issues), severity (critical/high/medium/low), summary (one line), failure_scenario (how/when it fails, backed by the code you actually read), suggested_fix (the concrete fix), is_atomic (true if the fix is <= 20 lines within a SINGLE file/function, else false).\nWrite summaries and details in English.",
+   "findingsSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+     "findings": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "additionalProperties": false,
+       "properties": {
+        "dimension": {
+         "type": "string"
+        },
+        "file": {
+         "type": "string"
+        },
+        "line": {
+         "type": "integer"
+        },
+        "severity": {
+         "type": "string",
+         "enum": [
+          "critical",
+          "high",
+          "medium",
+          "low"
+         ]
+        },
+        "summary": {
+         "type": "string"
+        },
+        "failure_scenario": {
+         "type": "string"
+        },
+        "suggested_fix": {
+         "type": "string"
+        },
+        "is_atomic": {
+         "type": "boolean"
+        }
+       },
+       "required": [
+        "dimension",
+        "file",
+        "severity",
+        "summary",
+        "failure_scenario",
+        "suggested_fix",
+        "is_atomic"
+       ]
+      }
+     },
+     "readFiles": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      },
+      "description": "Every file you actually opened with read_file while reviewing your assigned scope. Used to audit coverage; files you never opened count as un-reviewed."
+     }
+    },
+    "required": [
+     "findings",
+     "readFiles"
+    ]
+   }
+  },
+  {
+   "id": "error-handling",
+   "reviewerPrompt": "You are the \"error-handling\" reviewer for the iterate review.\nGoal: Omniscient pipeline (Drive -> LLM -> Confluence, SQLite dedup) is correct, safe, and reliable: correct HTTP/auth/retry handling, consistent 3-tier error classification (transient-retry / permanent-fail / recoverable-continue), no dedup or data-loss bugs, all changes validated by build + vet + test.\nScope: entire codebase.\nCOVERAGE RULE (mandatory): below is the exact file inventory you are assigned to review. You MUST open EVERY file in this inventory with the read_file tool before judging it \u2014 do not skip, skim-declare, or assume any file without reading it. Files you did not actually open are considered un-reviewed and will lower your coverage score. Return a `readFiles` array listing every file you actually opened.\nAssigned file inventory:\n- cmd/omniscient/auth.go\n- cmd/omniscient/config.go\n- cmd/omniscient/main.go\n- cmd/omniscient/main_test.go\n- cmd/omniscient/sync.go\n- internal/config/config.go\n- internal/config/config_test.go\n- internal/confluence/publisher.go\n- internal/confluence/publisher_test.go\n- internal/database/store.go\n- internal/database/store_test.go\n- internal/drive/client.go\n- internal/drive/client_test.go\n- internal/drive/oauth.go\n- internal/llm/anthropic.go\n- internal/llm/anthropic_test.go\n- internal/llm/extractor.go\n- internal/llm/extractor_test.go\n- internal/llm/openai.go\n- internal/llm/openai_test.go\n- internal/llm/util.go\n- internal/llm/util_test.go\n- internal/models/transcript.go\n- internal/models/transcript_test.go\n- internal/retry/retry.go\n- internal/retry/retry_test.go\nThis is round 1 \u2014 report every issue you find in this dimension.\nEVIDENCE RULE (mandatory): read every file you report on with the read_file tool BEFORE judging it. NEVER report a location you did not actually read \u2014 speculation about code you never inspected is a disqualifying failure, and fabricated line numbers are treated as poisoned evidence. Anchor every finding to real code.\nReturn a JSON object: {\"findings\": [...], \"readFiles\": [...]}.\nEach finding: dimension (must be \"error-handling\"), file (relative path), line (optional; the exact line you READ for a line-targeted issue; 0 or omitted for whole-file/module-level issues), severity (critical/high/medium/low), summary (one line), failure_scenario (how/when it fails, backed by the code you actually read), suggested_fix (the concrete fix), is_atomic (true if the fix is <= 20 lines within a SINGLE file/function, else false).\nWrite summaries and details in English.",
+   "findingsSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+     "findings": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "additionalProperties": false,
+       "properties": {
+        "dimension": {
+         "type": "string"
+        },
+        "file": {
+         "type": "string"
+        },
+        "line": {
+         "type": "integer"
+        },
+        "severity": {
+         "type": "string",
+         "enum": [
+          "critical",
+          "high",
+          "medium",
+          "low"
+         ]
+        },
+        "summary": {
+         "type": "string"
+        },
+        "failure_scenario": {
+         "type": "string"
+        },
+        "suggested_fix": {
+         "type": "string"
+        },
+        "is_atomic": {
+         "type": "boolean"
+        }
+       },
+       "required": [
+        "dimension",
+        "file",
+        "severity",
+        "summary",
+        "failure_scenario",
+        "suggested_fix",
+        "is_atomic"
+       ]
+      }
+     },
+     "readFiles": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      },
+      "description": "Every file you actually opened with read_file while reviewing your assigned scope. Used to audit coverage; files you never opened count as un-reviewed."
+     }
+    },
+    "required": [
+     "findings",
+     "readFiles"
+    ]
+   }
+  },
+  {
+   "id": "security",
+   "reviewerPrompt": "You are the \"security\" reviewer for the iterate review.\nGoal: Omniscient pipeline (Drive -> LLM -> Confluence, SQLite dedup) is correct, safe, and reliable: correct HTTP/auth/retry handling, consistent 3-tier error classification (transient-retry / permanent-fail / recoverable-continue), no dedup or data-loss bugs, all changes validated by build + vet + test.\nScope: entire codebase.\nCOVERAGE RULE (mandatory): below is the exact file inventory you are assigned to review. You MUST open EVERY file in this inventory with the read_file tool before judging it \u2014 do not skip, skim-declare, or assume any file without reading it. Files you did not actually open are considered un-reviewed and will lower your coverage score. Return a `readFiles` array listing every file you actually opened.\nAssigned file inventory:\n- cmd/omniscient/auth.go\n- cmd/omniscient/config.go\n- cmd/omniscient/main.go\n- cmd/omniscient/main_test.go\n- cmd/omniscient/sync.go\n- internal/config/config.go\n- internal/config/config_test.go\n- internal/confluence/publisher.go\n- internal/confluence/publisher_test.go\n- internal/database/store.go\n- internal/database/store_test.go\n- internal/drive/client.go\n- internal/drive/client_test.go\n- internal/drive/oauth.go\n- internal/llm/anthropic.go\n- internal/llm/anthropic_test.go\n- internal/llm/extractor.go\n- internal/llm/extractor_test.go\n- internal/llm/openai.go\n- internal/llm/openai_test.go\n- internal/llm/util.go\n- internal/llm/util_test.go\n- internal/models/transcript.go\n- internal/models/transcript_test.go\n- internal/retry/retry.go\n- internal/retry/retry_test.go\nThis is round 1 \u2014 report every issue you find in this dimension.\nEVIDENCE RULE (mandatory): read every file you report on with the read_file tool BEFORE judging it. NEVER report a location you did not actually read \u2014 speculation about code you never inspected is a disqualifying failure, and fabricated line numbers are treated as poisoned evidence. Anchor every finding to real code.\nReturn a JSON object: {\"findings\": [...], \"readFiles\": [...]}.\nEach finding: dimension (must be \"security\"), file (relative path), line (optional; the exact line you READ for a line-targeted issue; 0 or omitted for whole-file/module-level issues), severity (critical/high/medium/low), summary (one line), failure_scenario (how/when it fails, backed by the code you actually read), suggested_fix (the concrete fix), is_atomic (true if the fix is <= 20 lines within a SINGLE file/function, else false).\nWrite summaries and details in English.",
+   "findingsSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+     "findings": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "additionalProperties": false,
+       "properties": {
+        "dimension": {
+         "type": "string"
+        },
+        "file": {
+         "type": "string"
+        },
+        "line": {
+         "type": "integer"
+        },
+        "severity": {
+         "type": "string",
+         "enum": [
+          "critical",
+          "high",
+          "medium",
+          "low"
+         ]
+        },
+        "summary": {
+         "type": "string"
+        },
+        "failure_scenario": {
+         "type": "string"
+        },
+        "suggested_fix": {
+         "type": "string"
+        },
+        "is_atomic": {
+         "type": "boolean"
+        }
+       },
+       "required": [
+        "dimension",
+        "file",
+        "severity",
+        "summary",
+        "failure_scenario",
+        "suggested_fix",
+        "is_atomic"
+       ]
+      }
+     },
+     "readFiles": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      },
+      "description": "Every file you actually opened with read_file while reviewing your assigned scope. Used to audit coverage; files you never opened count as un-reviewed."
+     }
+    },
+    "required": [
+     "findings",
+     "readFiles"
+    ]
+   }
+  },
+  {
+   "id": "reliability",
+   "reviewerPrompt": "You are the \"reliability\" reviewer for the iterate review.\nGoal: Omniscient pipeline (Drive -> LLM -> Confluence, SQLite dedup) is correct, safe, and reliable: correct HTTP/auth/retry handling, consistent 3-tier error classification (transient-retry / permanent-fail / recoverable-continue), no dedup or data-loss bugs, all changes validated by build + vet + test.\nScope: entire codebase.\nCOVERAGE RULE (mandatory): below is the exact file inventory you are assigned to review. You MUST open EVERY file in this inventory with the read_file tool before judging it \u2014 do not skip, skim-declare, or assume any file without reading it. Files you did not actually open are considered un-reviewed and will lower your coverage score. Return a `readFiles` array listing every file you actually opened.\nAssigned file inventory:\n- cmd/omniscient/auth.go\n- cmd/omniscient/config.go\n- cmd/omniscient/main.go\n- cmd/omniscient/main_test.go\n- cmd/omniscient/sync.go\n- internal/config/config.go\n- internal/config/config_test.go\n- internal/confluence/publisher.go\n- internal/confluence/publisher_test.go\n- internal/database/store.go\n- internal/database/store_test.go\n- internal/drive/client.go\n- internal/drive/client_test.go\n- internal/drive/oauth.go\n- internal/llm/anthropic.go\n- internal/llm/anthropic_test.go\n- internal/llm/extractor.go\n- internal/llm/extractor_test.go\n- internal/llm/openai.go\n- internal/llm/openai_test.go\n- internal/llm/util.go\n- internal/llm/util_test.go\n- internal/models/transcript.go\n- internal/models/transcript_test.go\n- internal/retry/retry.go\n- internal/retry/retry_test.go\nThis is round 1 \u2014 report every issue you find in this dimension.\nEVIDENCE RULE (mandatory): read every file you report on with the read_file tool BEFORE judging it. NEVER report a location you did not actually read \u2014 speculation about code you never inspected is a disqualifying failure, and fabricated line numbers are treated as poisoned evidence. Anchor every finding to real code.\nReturn a JSON object: {\"findings\": [...], \"readFiles\": [...]}.\nEach finding: dimension (must be \"reliability\"), file (relative path), line (optional; the exact line you READ for a line-targeted issue; 0 or omitted for whole-file/module-level issues), severity (critical/high/medium/low), summary (one line), failure_scenario (how/when it fails, backed by the code you actually read), suggested_fix (the concrete fix), is_atomic (true if the fix is <= 20 lines within a SINGLE file/function, else false).\nWrite summaries and details in English.",
+   "findingsSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+     "findings": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "additionalProperties": false,
+       "properties": {
+        "dimension": {
+         "type": "string"
+        },
+        "file": {
+         "type": "string"
+        },
+        "line": {
+         "type": "integer"
+        },
+        "severity": {
+         "type": "string",
+         "enum": [
+          "critical",
+          "high",
+          "medium",
+          "low"
+         ]
+        },
+        "summary": {
+         "type": "string"
+        },
+        "failure_scenario": {
+         "type": "string"
+        },
+        "suggested_fix": {
+         "type": "string"
+        },
+        "is_atomic": {
+         "type": "boolean"
+        }
+       },
+       "required": [
+        "dimension",
+        "file",
+        "severity",
+        "summary",
+        "failure_scenario",
+        "suggested_fix",
+        "is_atomic"
+       ]
+      }
+     },
+     "readFiles": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      },
+      "description": "Every file you actually opened with read_file while reviewing your assigned scope. Used to audit coverage; files you never opened count as un-reviewed."
+     }
+    },
+    "required": [
+     "findings",
+     "readFiles"
+    ]
+   }
+  }
+ ],
+ "projectFiles": [
+  "cmd/omniscient/auth.go",
+  "cmd/omniscient/config.go",
+  "cmd/omniscient/main.go",
+  "cmd/omniscient/main_test.go",
+  "cmd/omniscient/sync.go",
+  "internal/config/config.go",
+  "internal/config/config_test.go",
+  "internal/confluence/publisher.go",
+  "internal/confluence/publisher_test.go",
+  "internal/database/store.go",
+  "internal/database/store_test.go",
+  "internal/drive/client.go",
+  "internal/drive/client_test.go",
+  "internal/drive/oauth.go",
+  "internal/llm/anthropic.go",
+  "internal/llm/anthropic_test.go",
+  "internal/llm/extractor.go",
+  "internal/llm/extractor_test.go",
+  "internal/llm/openai.go",
+  "internal/llm/openai_test.go",
+  "internal/llm/util.go",
+  "internal/llm/util_test.go",
+  "internal/models/transcript.go",
+  "internal/models/transcript_test.go",
+  "internal/retry/retry.go",
+  "internal/retry/retry_test.go"
+ ]
+}

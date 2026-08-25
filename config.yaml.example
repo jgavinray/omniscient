@@ -11,7 +11,7 @@ google:
 
   # Google Drive folder ID containing transcripts
   # Find via: Right-click folder in Drive → "Get link" → Extract ID from URL
-  folder_id: "YOUR_GOOGLE_DRIVE_FOLDER_ID"
+  folder_id: "1AaBbCcDdEeFfGgHhIiJj"
 
 llm:
   # Provider: "anthropic" or "openai-compatible"
@@ -22,24 +22,29 @@ llm:
   anthropic_api_key: ""
 
   # For provider=openai-compatible:
-  # Base URL for OpenAI-compatible API (vLLM, Ollama, OpenAI, etc.)
-  openai_base_url: "http://spark:8000/v1"
+  # Base URL for OpenAI-compatible API (vLLM, sglang, Ollama, OpenAI, etc.)
+  # Use the RAW local IP — the "spark" hostname resolves to a Tailscale
+  # address that does not expose these ports. Options on the home LAN:
+  #   192.168.0.43:8000 -> sglang, serves "qwen3.8-27b" (default below)
+  #   192.168.0.43:8001 -> vLLM, serves "qwen38" (non-thinking)
+  #   192.168.0.33:8888 -> vLLM, serves "deepseek-v4-flash-dspark"
+  # Note: "qwen3.8-27b" is a thinking model — it spends tokens reasoning
+  # before answering, so the Classify call requests an 8k-token budget so
+  # the reply cannot come back empty. The 8001 pair above is a non-thinking
+  # alternative if you want faster classifications.
+  openai_base_url: "http://192.168.0.43:8000/v1"
   # API key (optional for local endpoints, required for OpenAI)
   openai_api_key: "local"
 
-  # Model name
+  # Model name — must match an id returned by the endpoint's /v1/models
   # For anthropic: "claude-opus-4", "claude-sonnet-4", "claude-haiku-4"
-  # For openai-compatible: depends on endpoint (e.g., "Qwen/Qwen2.5-72B-Instruct-AWQ")
-  model: "Qwen/Qwen2.5-72B-Instruct-AWQ"
+  model: "qwen3.8-27b"
 
-  # Timeout for LLM extraction (seconds, default: 120)
+  # Timeout for LLM extraction (seconds)
+  # Default: 120 if not specified
   timeout: 120
 
 confluence:
-  # Set to false to disable Confluence publishing (output goes to stdout instead)
-  # Default: true (enabled)
-  enabled: true
-
   # Confluence Cloud URL (e.g., https://your-company.atlassian.net)
   base_url: "https://your-company.atlassian.net"
 
@@ -57,51 +62,35 @@ confluence:
   # Leave empty for root-level pages
   parent_page_id: ""
 
+  # Confluence sink on/off (defaults to enabled when omitted)
+  # enabled: true
+
+slack:
+  # Slack incoming-webhook sink (DISABLED by default)
+  # Create a webhook: Slack app → Incoming Webhooks → pick a channel
+  enabled: false
+  # webhook_url: "https://hooks.slack.com/services/XXXX/YYYY/ZZZZ"
+
+local:
+  # Local markdown sink (ENABLED by default)
+  # Writes one .md file per transcript to output_dir as <date>_<name>.md
+  enabled: true
+  output_dir: "./transcripts"
+
 sync:
-  # How far back to look for transcripts (hours, default: 24)
+  # How far back to look for transcripts (hours)
   lookback_hours: 24
 
   # SQLite database path (tracks processed transcripts)
   database_path: "/opt/omniscient/data/omniscient.db"
 
-  # Maximum transcripts to process per run (default: 50)
+  # Maximum transcripts to process per run
   # (prevents runaway processing on first run)
   max_per_run: 50
 
 logging:
-  # Log level: debug, info, warn, error (default: info)
+  # Log level: debug, info, warn, error
   level: "info"
 
   # Log file path (leave empty for stdout only)
-  # When set, logs are written to both stdout and this file
   file: "/var/log/omniscient/omniscient.log"
-
-# Set to true to skip publishing and print extracted output to logs instead
-dry_run: false
-
-# Prompt configuration (optional — sensible defaults are provided)
-# prompts:
-#   classify_prompt: |
-#     Classify this meeting transcript into one of the following types: {{TEMPLATE_KEYS}}
-#
-#     Read the first portion of the transcript below and respond with ONLY the type key (a single word, no explanation).
-#
-#     TRANSCRIPT PREVIEW:
-#     {{TRANSCRIPT_PREVIEW}}
-#
-#   templates:
-#     engineering:
-#       description: "Engineering standups, design reviews, and technical discussions"
-#       extraction_prompt: |
-#         You are a meeting notes assistant. Extract structured notes from this engineering meeting transcript.
-#         ...
-#         TRANSCRIPT:
-#         {{TRANSCRIPT}}
-#     customer_success:
-#       description: "Customer calls, success reviews, and account meetings"
-#       extraction_prompt: |
-#         ...
-#     planning:
-#       description: "Sprint planning, roadmap reviews, and strategy sessions"
-#       extraction_prompt: |
-#         ...

@@ -1,14 +1,18 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os/signal"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jgavinray/omniscient/internal/config"
 	"github.com/jgavinray/omniscient/internal/confluence"
@@ -16,13 +20,22 @@ import (
 	"github.com/jgavinray/omniscient/internal/drive"
 	"github.com/jgavinray/omniscient/internal/llm"
 	"github.com/jgavinray/omniscient/internal/models"
+	"github.com/jgavinray/omniscient/internal/publish"
 	"github.com/spf13/cobra"
 )
 
+// runOptions carries execution-time options for the sync pipeline.
+type runOptions struct {
+	interactive bool
+	stdin       io.Reader
+	stdout      io.Writer
+}
+
 func newSyncCmd() *cobra.Command {
-	return &cobra.Command{
+	var interactive bool
+	cmd := &cobra.Command{
 		Use:   "sync",
-		Short: "Fetch, extract, and publish recent meeting transcripts",
+		Short: "Fetch, extract, and route recent meeting transcripts to configured sinks",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load(cfgFile)
 			if err != nil {
@@ -35,13 +48,20 @@ func newSyncCmd() *cobra.Command {
 			ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
 			defer stop()
 
-			return runSync(ctx, cfg)
+			return runSync(ctx, cfg, &runOptions{
+				interactive: interactive,
+				stdin:       cmd.InOrStdin(),
+				stdout:      cmd.OutOrStdout(),
+			})
 		},
 	}
+	cmd.Flags().BoolVar(&interactive, "interactive", false,
+		"show each extracted summary in the terminal and prompt for approval / sink selection before publishing")
+	return cmd
 }
 
 // runSync wires up all dependencies and delegates to the sync service.
-func runSync(ctx context.Context, cfg *config.Config) error {
+func runSync(ctx context.Context, cfg *config.Config, opts *runOptions) error {
 	// Initialize Google Drive client.
 	driveClient, err := drive.NewClient(ctx, cfg.Google.CredentialsFile, cfg.Google.TokenFile)
 	if err != nil {
@@ -54,15 +74,35 @@ func runSync(ctx context.Context, cfg *config.Config) error {
 		return fmt.Errorf("init llm extractor: %w", err)
 	}
 
-	// Initialize Confluence publisher (nil when disabled).
-	var confluenceClient *confluence.Client
+	// Build the list of enabled sinks.
+	var sinks []publish.Sink
 	if cfg.Confluence.IsEnabled() {
-		confluenceClient = confluence.NewClient(
+		client := confluence.NewClient(
 			cfg.Confluence.BaseURL,
 			cfg.Confluence.Email,
 			cfg.Confluence.APIToken,
 		)
+		sinks = append(sinks, publish.NewConfluenceSink(client, cfg.Confluence.SpaceKey, cfg.Confluence.ParentPageID))
 	}
+	if cfg.Slack.IsEnabled() {
+		sinks = append(sinks, publish.NewSlackSink(cfg.Slack.WebhookURL))
+	}
+	if cfg.Local.IsEnabled() {
+		sinks = append(sinks, publish.NewLocalSink(cfg.Local.OutputDir))
+	}
+
+	if opts.interactive && len(sinks) == 0 {
+		return fmt.Errorf("interactive mode requires at least one enabled sink")
+	}
+	if !cfg.DryRun && len(sinks) == 0 {
+		return fmt.Errorf("no sinks enabled: enable confluence, slack, or local in config.yaml")
+	}
+
+	sinkNames := make([]string, len(sinks))
+	for i, s := range sinks {
+		sinkNames[i] = s.Name()
+	}
+	slog.Info("sinks enabled", "sinks", sinkNames)
 
 	// Initialize SQLite database for deduplication.
 	store, err := database.NewStore(cfg.Sync.DatabasePath)
@@ -75,9 +115,10 @@ func runSync(ctx context.Context, cfg *config.Config) error {
 	svc := NewSyncService(
 		driveClient,
 		llmExtractor,
-		confluenceClient,
+		sinks,
 		store,
 		cfg,
+		opts,
 	)
 
 	return svc.Run(ctx)
@@ -96,15 +137,10 @@ type extractor interface {
 	Extract(ctx context.Context, transcript string, extractionPrompt string) (string, error)
 }
 
-// publisher publishes extracted notes to Confluence.
-type publisher interface {
-	PublishMarkdown(ctx context.Context, spaceKey, parentPageID string, result *models.ExtractionResult, transcriptName string) (string, error)
-}
-
 // stateStore tracks processed transcripts for idempotent pipeline runs.
 type stateStore interface {
 	IsProcessed(ctx context.Context, transcriptID string) (bool, error)
-	MarkProcessed(ctx context.Context, transcriptID, transcriptName, confluenceURL string) error
+	MarkProcessed(ctx context.Context, transcriptID, transcriptName, sinkResults string) error
 	MarkFailed(ctx context.Context, transcriptID, transcriptName, errorMessage string) error
 	RecordSyncEvent(ctx context.Context, event *database.SyncEvent) error
 }
@@ -113,9 +149,11 @@ type stateStore interface {
 type SyncService struct {
 	fetcher      fetcher
 	extractor    extractor
-	publisher    publisher
+	sinks        []publish.Sink
+	sinkNames    []string
 	store        stateStore
 	cfg          *config.Config
+	opts         *runOptions
 	templateKeys []string
 	runID        string
 	stageCounts  map[string]int
@@ -125,9 +163,10 @@ type SyncService struct {
 func NewSyncService(
 	fetcher fetcher,
 	extractor extractor,
-	publisher publisher,
+	sinks []publish.Sink,
 	store stateStore,
 	cfg *config.Config,
+	opts *runOptions,
 ) *SyncService {
 	// Pre-compute sorted template keys.
 	templateKeys := make([]string, 0, len(cfg.Prompts.Templates))
@@ -136,12 +175,19 @@ func NewSyncService(
 	}
 	sort.Strings(templateKeys)
 
+	sinkNames := make([]string, len(sinks))
+	for i, s := range sinks {
+		sinkNames[i] = s.Name()
+	}
+
 	return &SyncService{
 		fetcher:      fetcher,
 		extractor:    extractor,
-		publisher:    publisher,
+		sinks:        sinks,
+		sinkNames:    sinkNames,
 		store:        store,
 		cfg:          cfg,
+		opts:         opts,
 		templateKeys: templateKeys,
 	}
 }
@@ -183,8 +229,14 @@ func (s *SyncService) recordEvent(ctx context.Context, stage, status string, met
 }
 
 // Run executes the full sync pipeline: fetch → classify → extract → parse →
-// publish → mark.  It returns early on context cancellation.
+// route → mark.  It returns early on context cancellation.
 func (s *SyncService) Run(ctx context.Context) error {
+	// Refuse to run without any enabled sink (unless dry-run): marking
+	// transcripts processed without publishing anywhere would silently lose
+	// them. runSync enforces the same guard earlier, this is a defense in depth.
+	if len(s.sinks) == 0 && !s.cfg.DryRun {
+		return fmt.Errorf("no sinks enabled: enable confluence, slack, or local in config.yaml")
+	}
 	s.runID = fmt.Sprintf("run-%s", time.Now().UTC().Format(time.RFC3339Nano))
 	s.stageCounts = make(map[string]int)
 	slog.Info("sync run started", "run_id", s.runID)
@@ -221,7 +273,7 @@ func (s *SyncService) Run(ctx context.Context) error {
 		pending = pending[:s.cfg.Sync.MaxPerRun]
 	}
 
-	// Process each transcript: classify → extract → parse → publish → mark.
+	// Process each transcript: classify → extract → parse → route → mark.
 	successCount := 0
 	skippedCount := 0
 	persistenceFailures := 0
@@ -239,11 +291,8 @@ func (s *SyncService) Run(ctx context.Context) error {
 			"name", transcript.Name,
 		)
 
-		// Classify: truncate content to 1000 chars for classification.
-		preview := transcript.Content
-		if len(preview) > 1000 {
-			preview = preview[:1000]
-		}
+		// Classify: truncate content to 1000 chars (UTF-8 safe) for classification.
+		preview := truncateRuneSafe(transcript.Content, 1000)
 		meetingType, err := s.extractor.Classify(ctx, preview, s.templateKeys, s.cfg.Prompts.ClassifyPrompt)
 		if err != nil {
 			s.recordEvent(ctx, "classification_failed", "error", map[string]string{"transcript_id": transcript.ID, "error": err.Error()})
@@ -294,58 +343,79 @@ func (s *SyncService) Run(ctx context.Context) error {
 
 		// Dry run check.
 		if s.cfg.DryRun {
-			preview := rawOutput
-			if len(preview) > 200 {
-				preview = preview[:200] + "... [truncated]"
-			}
-			slog.Info("dry run, skipping publish",
-				"name", transcript.Name,
-				"output_bytes", len(rawOutput),
-				"output_preview", preview,
-			)
+			fmt.Fprintf(s.opts.stdout, "--- DRY RUN: %s ---\n%s\n", transcript.Name, rawOutput)
 			continue
 		}
 
-		// Publish.
-		var confluenceURL string
-		if !s.cfg.Confluence.IsEnabled() || s.publisher == nil {
-			slog.Info("confluence disabled, skipping publish", "name", transcript.Name)
-			skippedCount++
-			continue
-		}
-
-		if s.publisher != nil {
-			confluenceURL, err = s.publisher.PublishMarkdown(
-				ctx,
-				s.cfg.Confluence.SpaceKey,
-				s.cfg.Confluence.ParentPageID,
-				result,
-				transcript.Name,
-			)
+		// Decide which sinks to route this transcript to.
+		targets := s.sinks
+		if s.opts.interactive {
+			fmt.Fprintf(s.opts.stdout, "\n================  %s  ================\n%s\n", transcript.Name, rawOutput)
+			choice, skip, err := promptForSinks(s.opts.stdin, s.opts.stdout, s.sinkNames)
 			if err != nil {
-				s.recordEvent(ctx, "publish_failed", "error", map[string]string{"transcript_id": transcript.ID, "error": err.Error()})
-				publishFailures++
-				slog.Error("publish failed", "id", transcript.ID, "error", err)
-				if markErr := s.store.MarkFailed(ctx, transcript.ID, transcript.Name, "publish failed: "+err.Error()); markErr != nil {
-					slog.Error("mark failed failed", "id", transcript.ID, "error", markErr)
-				}
+				slog.Error("interactive prompt failed", "id", transcript.ID, "error", err)
 				continue
 			}
-
-			s.recordEvent(ctx, "publish_succeeded", "ok", map[string]string{"transcript_id": transcript.ID})
+			if skip {
+				// Mark processed (with empty results) so a user-skipped
+				// transcript is not re-prompted on the next run.
+				if err := s.store.MarkProcessed(ctx, transcript.ID, transcript.Name, "[]"); err != nil {
+					slog.Error("mark skipped failed", "id", transcript.ID, "error", err)
+					continue
+				}
+				skippedCount++
+				slog.Info("transcript skipped by user", "id", transcript.ID)
+				continue
+			}
+			targets = make([]publish.Sink, 0, len(choice))
+			for _, idx := range choice {
+				targets = append(targets, s.sinks[idx])
+			}
 		}
 
-		// Mark as processed in the database.
-		if err := s.store.MarkProcessed(ctx, transcript.ID, transcript.Name, confluenceURL); err != nil {
+		// Publish to each target sink. All-or-nothing: if any sink fails the
+		// transcript is NOT marked processed (it is marked failed), so it is
+		// retried on the next run. Sinks are idempotent (Confluence updates by
+		// title, local files overwrite); Slack is the only sink that can
+		// duplicate on retry.
+		results := make([]publish.Result, 0, len(targets))
+		failed := false
+		for _, sink := range targets {
+			ref, err := sink.Publish(ctx, result, transcript.Name)
+			if err != nil {
+				s.recordEvent(ctx, "publish_failed", "error", map[string]string{"transcript_id": transcript.ID, "sink": sink.Name(), "error": err.Error()})
+				publishFailures++
+				slog.Error("sink publish failed", "id", transcript.ID, "sink", sink.Name(), "error", err)
+				if markErr := s.store.MarkFailed(ctx, transcript.ID, transcript.Name, "publish failed to "+sink.Name()+": "+err.Error()); markErr != nil {
+					slog.Error("mark failed failed", "id", transcript.ID, "error", markErr)
+				}
+				failed = true
+				break
+			}
+			results = append(results, publish.Result{Sink: sink.Name(), Ref: ref})
+			s.recordEvent(ctx, "publish_succeeded", "ok", map[string]string{"transcript_id": transcript.ID, "sink": sink.Name()})
+		}
+		if failed {
+			continue
+		}
+
+		resultsJSON, err := publish.MarshalResults(results)
+		if err != nil {
+			slog.Error("marshal sink results failed", "id", transcript.ID, "error", err)
+			continue
+		}
+
+		// Mark as processed in the database with the serialized sink results.
+		if err := s.store.MarkProcessed(ctx, transcript.ID, transcript.Name, resultsJSON); err != nil {
 			s.recordEvent(ctx, "state_persistence_failed", "error", map[string]string{"transcript_id": transcript.ID, "error": err.Error()})
 			persistenceFailures++
-			slog.Error("mark processed failed", "id", transcript.ID, "url", confluenceURL, "error", err)
+			slog.Error("mark processed failed", "id", transcript.ID, "results", resultsJSON, "error", err)
 			continue
 		}
 
 		s.recordEvent(ctx, "state_persistence_succeeded", "ok", map[string]string{"transcript_id": transcript.ID})
 
-		slog.Info("published", "url", confluenceURL)
+		slog.Info("routed transcript", "id", transcript.ID, "results", resultsJSON)
 		successCount++
 	}
 
@@ -362,4 +432,72 @@ func (s *SyncService) Run(ctx context.Context) error {
 	s.recordEvent(ctx, "run_completed", "ok", map[string]string{"status": "completed"})
 
 	return nil
+}
+
+// promptForSinks displays the available sinks and reads a single line of
+// input:
+//   - "a", "all", or empty → select all sinks
+//   - "n" / "skip"         → skip this transcript entirely
+//   - comma-separated 1-based indices (e.g. "1,3") → select those sinks
+//
+// It returns the selected sink indices and whether the transcript was skipped.
+func promptForSinks(in io.Reader, out io.Writer, names []string) ([]int, bool, error) {
+	w := bufio.NewWriter(out)
+	for i, n := range names {
+		fmt.Fprintf(w, "  [%d] %s\n", i+1, n)
+	}
+	fmt.Fprint(w, "Route to sink(s)? [a=all, n=skip, or numbers e.g. 1,3]: ")
+	if err := w.Flush(); err != nil {
+		return nil, false, fmt.Errorf("write prompt: %w", err)
+	}
+
+	br := bufio.NewReader(in)
+	line, err := br.ReadString('\n')
+	if err != nil && err != io.EOF {
+		return nil, false, fmt.Errorf("reading input: %w", err)
+	}
+	line = strings.ToLower(strings.TrimSpace(line))
+
+	switch line {
+	case "", "a", "all":
+		choice := make([]int, len(names))
+		for i := range names {
+			choice[i] = i
+		}
+		return choice, false, nil
+	case "n", "skip":
+		return nil, true, nil
+	}
+
+	var choice []int
+	for _, part := range strings.Split(line, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		idx, perr := strconv.Atoi(part)
+		if perr != nil {
+			return nil, false, fmt.Errorf("invalid selection %q (use a, n, or comma-separated sink numbers)", line)
+		}
+		if idx < 1 || idx > len(names) {
+			return nil, false, fmt.Errorf("sink index %d out of range (1-%d)", idx, len(names))
+		}
+		choice = append(choice, idx-1)
+	}
+	if len(choice) == 0 {
+		return nil, false, fmt.Errorf("no valid sinks selected")
+	}
+	return choice, false, nil
+}
+
+// truncateRuneSafe truncates s to at most max bytes without splitting a
+// multi-byte UTF-8 rune.
+func truncateRuneSafe(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	for max > 0 && !utf8.RuneStart(s[max]) {
+		max--
+	}
+	return s[:max]
 }

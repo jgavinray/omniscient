@@ -17,6 +17,8 @@ type Config struct {
 	Google     GoogleConfig     `yaml:"google"`
 	LLM        LLMConfig        `yaml:"llm"`
 	Confluence ConfluenceConfig `yaml:"confluence"`
+	Slack      SlackConfig      `yaml:"slack"`
+	Local      LocalConfig      `yaml:"local"`
 	Sync       SyncConfig       `yaml:"sync"`
 	Logging    LoggingConfig    `yaml:"logging"`
 	DryRun     bool             `yaml:"dry_run"`
@@ -53,6 +55,40 @@ type ConfluenceConfig struct {
 // IsEnabled returns whether Confluence publishing is enabled.
 // Defaults to true when the Enabled field is nil (not specified).
 func (c *ConfluenceConfig) IsEnabled() bool {
+	if c.Enabled == nil {
+		return true
+	}
+	return *c.Enabled
+}
+
+// SlackConfig holds Slack incoming-webhook publishing settings.
+// Publishing is DISABLED by default (Enabled == nil) until explicitly
+// enabled with a valid webhook URL.
+type SlackConfig struct {
+	Enabled    *bool  `yaml:"enabled"`
+	WebhookURL string `yaml:"webhook_url"`
+}
+
+// IsEnabled returns whether Slack publishing is enabled.
+// Defaults to false when the Enabled field is nil (not specified).
+func (c *SlackConfig) IsEnabled() bool {
+	if c.Enabled == nil {
+		return false
+	}
+	return *c.Enabled
+}
+
+// LocalConfig holds settings for the local-file sink (markdown output).
+// Writing is ENABLED by default (Enabled == nil) so summaries are always kept
+// on disk even when remote sinks are disabled.
+type LocalConfig struct {
+	Enabled   *bool  `yaml:"enabled"`
+	OutputDir string `yaml:"output_dir"`
+}
+
+// IsEnabled returns whether the local sink is enabled.
+// Defaults to true when the Enabled field is nil (not specified).
+func (c *LocalConfig) IsEnabled() bool {
 	if c.Enabled == nil {
 		return true
 	}
@@ -245,6 +281,25 @@ func (c *Config) validate() error {
 		if c.Confluence.SpaceKey == "" {
 			return fmt.Errorf("confluence.space_key must not be empty")
 		}
+	}
+	// Slack config validation (skip when disabled).
+	if c.Slack.IsEnabled() {
+		if c.Slack.WebhookURL == "" {
+			return fmt.Errorf("slack.webhook_url is required when slack is enabled")
+		}
+		if !strings.HasPrefix(c.Slack.WebhookURL, "https://hooks.slack.com/") {
+			return fmt.Errorf("slack.webhook_url must be an incoming-webhook URL (https://hooks.slack.com/...)")
+		}
+	}
+
+	// Local sink defaults.
+	if c.Local.IsEnabled() && c.Local.OutputDir == "" {
+		c.Local.OutputDir = "./transcripts"
+	}
+
+	// At least one sink must be enabled unless in dry-run mode.
+	if !c.DryRun && !c.Confluence.IsEnabled() && !c.Slack.IsEnabled() && !c.Local.IsEnabled() {
+		return fmt.Errorf("at least one sink (confluence, slack, or local) must be enabled")
 	}
 
 	// Sync config validation.
