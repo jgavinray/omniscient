@@ -11,7 +11,7 @@ google:
 
   # Google Drive folder ID containing transcripts
   # Find via: Right-click folder in Drive → "Get link" → Extract ID from URL
-  folder_id: "1abc...xyz"
+  folder_id: "1AaBbCcDdEeFfGgHhIiJj"
 
 llm:
   # Provider: "anthropic" or "openai-compatible"

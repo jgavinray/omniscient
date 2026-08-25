@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/jgavinray/omniscient/internal/database"
 	"github.com/jgavinray/omniscient/internal/drive"
 	"github.com/jgavinray/omniscient/internal/models"
+	"github.com/jgavinray/omniscient/internal/publish"
 )
 
 // ---------------------------------------------------------------------------
@@ -41,13 +43,21 @@ func (f *fakeExtractor) Extract(ctx context.Context, transcript string, extracti
 	return sampleExtractionOutput, f.extractErr
 }
 
-// fakePublisher records calls and can return an error.
-type fakePublisher struct {
+// fakeSink records calls and can return an error. It satisfies publish.Sink.
+type fakeSink struct {
+	name      string
 	published []string
 	err       error
 }
 
-func (f *fakePublisher) PublishMarkdown(ctx context.Context, spaceKey, parentPageID string, result *models.ExtractionResult, transcriptName string) (string, error) {
+func (f *fakeSink) Name() string {
+	if f.name != "" {
+		return f.name
+	}
+	return "confluence"
+}
+
+func (f *fakeSink) Publish(ctx context.Context, result *models.ExtractionResult, transcriptName string) (string, error) {
 	f.published = append(f.published, transcriptName)
 	return "https://confluence.example.com/pages/12345", f.err
 }
@@ -73,7 +83,7 @@ func (s *fakeStore) IsProcessed(ctx context.Context, transcriptID string) (bool,
 	return s.processed[transcriptID], s.processedErr
 }
 
-func (s *fakeStore) MarkProcessed(ctx context.Context, transcriptID, transcriptName, confluenceURL string) error {
+func (s *fakeStore) MarkProcessed(ctx context.Context, transcriptID, transcriptName, sinkResults string) error {
 	s.processed[transcriptID] = true
 	return s.markProcessedErr
 }
@@ -95,8 +105,8 @@ func (s *fakeStore) RecordSyncEvent(ctx context.Context, event *database.SyncEve
 func makeTestConfig() *config.Config {
 	return &config.Config{
 		Google: config.GoogleConfig{
-			CredentialsFile: "/opt/omiscient/credentials.json",
-			TokenFile:       "/opt/omiscient/token.json",
+			CredentialsFile: "/opt/omniscient/credentials.json",
+			TokenFile:       "/opt/omniscient/token.json",
 			FolderID:        "abc123folderID",
 		},
 		LLM: config.LLMConfig{
@@ -133,6 +143,11 @@ func makeTestConfig() *config.Config {
 	}
 }
 
+// testRunOptions builds the default runOptions for service tests (non-interactive).
+func testRunOptions() *runOptions {
+	return &runOptions{stdout: io.Discard}
+}
+
 // ---------------------------------------------------------------------------
 // Acceptance tests
 // ---------------------------------------------------------------------------
@@ -147,17 +162,17 @@ func TestSyncService_AlreadyPublishedSkip(t *testing.T) {
 		},
 	}
 	extractor := &fakeExtractor{meetingType: "engineering"}
-	publisher := &fakePublisher{}
+	sink := &fakeSink{}
 	cfg := makeTestConfig()
 
-	svc := NewSyncService(fetcher, extractor, publisher, store, cfg)
+	svc := NewSyncService(fetcher, extractor, []publish.Sink{sink}, store, cfg, testRunOptions())
 	if err := svc.Run(context.Background()); err != nil {
 		t.Fatalf("Run returned error: %v", err)
 	}
 
 	// The transcript was already processed, so nothing should be published.
-	if len(publisher.published) != 0 {
-		t.Errorf("expected 0 published, got %d", len(publisher.published))
+	if len(sink.published) != 0 {
+		t.Errorf("expected 0 published, got %d", len(sink.published))
 	}
 }
 
@@ -170,18 +185,18 @@ func TestSyncService_DryRunNoPublishNoMarkProcessed(t *testing.T) {
 		},
 	}
 	extractor := &fakeExtractor{meetingType: "engineering"}
-	publisher := &fakePublisher{}
+	sink := &fakeSink{}
 	cfg := makeTestConfig()
 	cfg.DryRun = true
 
-	svc := NewSyncService(fetcher, extractor, publisher, store, cfg)
+	svc := NewSyncService(fetcher, extractor, []publish.Sink{sink}, store, cfg, testRunOptions())
 	if err := svc.Run(context.Background()); err != nil {
 		t.Fatalf("Run returned error: %v", err)
 	}
 
 	// In dry-run mode, nothing should be published.
-	if len(publisher.published) != 0 {
-		t.Errorf("expected 0 published in dry-run, got %d", len(publisher.published))
+	if len(sink.published) != 0 {
+		t.Errorf("expected 0 published in dry-run, got %d", len(sink.published))
 	}
 
 	// In dry-run mode, MarkProcessed should NOT be called (the transcript
@@ -191,7 +206,7 @@ func TestSyncService_DryRunNoPublishNoMarkProcessed(t *testing.T) {
 	}
 }
 
-func TestSyncService_ConfluenceDisabledNoMarkProcessed(t *testing.T) {
+func TestSyncService_NoSinksEnabledFails(t *testing.T) {
 	store := newFakeStore()
 
 	fetcher := &fakeFetcher{
@@ -200,23 +215,19 @@ func TestSyncService_ConfluenceDisabledNoMarkProcessed(t *testing.T) {
 		},
 	}
 	extractor := &fakeExtractor{meetingType: "engineering"}
-	publisher := &fakePublisher{}
 	cfg := makeTestConfig()
-	cfg.Confluence.Enabled = boolPtr(false)
 
-	svc := NewSyncService(fetcher, extractor, publisher, store, cfg)
-	if err := svc.Run(context.Background()); err != nil {
-		t.Fatalf("Run returned error: %v", err)
+	// No sinks and not dry-run: the service must fail loudly rather than
+	// silently marking transcripts as processed without publishing anywhere.
+	svc := NewSyncService(fetcher, extractor, nil, store, cfg, testRunOptions())
+	if err := svc.Run(context.Background()); err == nil {
+		t.Fatal("expected error for zero sinks, got nil")
+	} else if !strings.Contains(err.Error(), "no sinks") {
+		t.Errorf("expected error to mention 'no sinks', got: %v", err)
 	}
 
-	// Confluence disabled: no publish calls.
-	if len(publisher.published) != 0 {
-		t.Errorf("expected 0 published, got %d", len(publisher.published))
-	}
-
-	// MarkProcessed should NOT be called when confluence is disabled.
 	if store.processed["doc-001"] {
-		t.Error("expected doc-001 NOT to be marked as processed when confluence is disabled")
+		t.Error("expected doc-001 NOT to be marked as processed when no sinks are enabled")
 	}
 }
 
@@ -229,10 +240,10 @@ func TestSyncService_ExtractionFailureCallsMarkFailed(t *testing.T) {
 		},
 	}
 	extractor := &fakeExtractor{meetingType: "engineering", extractErr: errors.New("llm timeout")}
-	publisher := &fakePublisher{}
+	sink := &fakeSink{}
 	cfg := makeTestConfig()
 
-	svc := NewSyncService(fetcher, extractor, publisher, store, cfg)
+	svc := NewSyncService(fetcher, extractor, []publish.Sink{sink}, store, cfg, testRunOptions())
 	_ = svc.Run(context.Background())
 
 	// MarkFailed should have been called for the failed transcript.
@@ -253,10 +264,10 @@ func TestSyncService_PublishFailureCallsMarkFailed(t *testing.T) {
 		},
 	}
 	extractor := &fakeExtractor{meetingType: "engineering"}
-	publisher := &fakePublisher{err: errors.New("confluence unavailable")}
+	sink := &fakeSink{err: errors.New("confluence unavailable")}
 	cfg := makeTestConfig()
 
-	svc := NewSyncService(fetcher, extractor, publisher, store, cfg)
+	svc := NewSyncService(fetcher, extractor, []publish.Sink{sink}, store, cfg, testRunOptions())
 	_ = svc.Run(context.Background())
 
 	// MarkFailed should have been called for the failed transcript.
@@ -311,10 +322,10 @@ func TestSyncService_MarkProcessedFailureReturnsPersistenceError(t *testing.T) {
 		},
 	}
 	extractor := &fakeExtractor{meetingType: "engineering"}
-	publisher := &fakePublisher{}
+	sink := &fakeSink{}
 	cfg := makeTestConfig()
 
-	svc := NewSyncService(fetcher, extractor, publisher, store, cfg)
+	svc := NewSyncService(fetcher, extractor, []publish.Sink{sink}, store, cfg, testRunOptions())
 	err := svc.Run(context.Background())
 	if err == nil {
 		t.Fatal("expected error due to MarkProcessed failure")
@@ -335,10 +346,10 @@ func TestSyncService_AllNonSkippedTranscriptsFailPublishReturnsError(t *testing.
 		},
 	}
 	extractor := &fakeExtractor{meetingType: "engineering"}
-	publisher := &fakePublisher{err: errors.New("confluence unavailable")}
+	sink := &fakeSink{err: errors.New("confluence unavailable")}
 	cfg := makeTestConfig()
 
-	svc := NewSyncService(fetcher, extractor, publisher, store, cfg)
+	svc := NewSyncService(fetcher, extractor, []publish.Sink{sink}, store, cfg, testRunOptions())
 	err := svc.Run(context.Background())
 	if err == nil {
 		t.Fatal("expected error when all non-skipped transcripts fail publish")
@@ -363,10 +374,10 @@ func TestSyncService_SuccessfulRunRecordsAllEventStages(t *testing.T) {
 		},
 	}
 	extractor := &fakeExtractor{meetingType: "engineering"}
-	publisher := &fakePublisher{}
+	sink := &fakeSink{}
 	cfg := makeTestConfig()
 
-	svc := NewSyncService(fetcher, extractor, publisher, store, cfg)
+	svc := NewSyncService(fetcher, extractor, []publish.Sink{sink}, store, cfg, testRunOptions())
 	if err := svc.Run(context.Background()); err != nil {
 		t.Fatalf("Run returned error: %v", err)
 	}

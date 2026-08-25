@@ -231,6 +231,12 @@ func (s *SyncService) recordEvent(ctx context.Context, stage, status string, met
 // Run executes the full sync pipeline: fetch → classify → extract → parse →
 // route → mark.  It returns early on context cancellation.
 func (s *SyncService) Run(ctx context.Context) error {
+	// Refuse to run without any enabled sink (unless dry-run): marking
+	// transcripts processed without publishing anywhere would silently lose
+	// them. runSync enforces the same guard earlier, this is a defense in depth.
+	if len(s.sinks) == 0 && !s.cfg.DryRun {
+		return fmt.Errorf("no sinks enabled: enable confluence, slack, or local in config.yaml")
+	}
 	s.runID = fmt.Sprintf("run-%s", time.Now().UTC().Format(time.RFC3339Nano))
 	s.stageCounts = make(map[string]int)
 	slog.Info("sync run started", "run_id", s.runID)
